@@ -17,74 +17,63 @@ The admin dashboard shows aggregate ratings and a randomised stream of comments.
 
 - **Next.js 14** (App Router)
 - **Azure Database for PostgreSQL** (Flexible Server), accessed with **node-postgres (`pg`)** — works with any standard Postgres, not tied to one host
-- **Azure App Service** (Linux, Node 20) for hosting, deployed via GitHub Actions
+- **Containerized** (multi-stage `Dockerfile`, Next.js standalone output) and hosted on **Azure Container Apps** (scale-to-zero), image stored in **Azure Container Registry**, deployed via GitHub Actions
 - **Tailwind CSS** — styling
 - **jose** — JWT for the admin session cookie
 - No analytics, no tracking scripts, no third-party JS
 
 The schema auto-creates on first request (see `lib/schema.js` + `lib/db.ts`), so a fresh database needs no manual migration step.
 
-## Deploy to Azure — step by step
+## Deploy to Azure (Container Apps)
 
-This deploys to **Azure App Service** with an **Azure Database for PostgreSQL** backend. Pushing to `main` on GitHub triggers the workflow in `.github/workflows/azure-deploy.yml`, which builds and ships to App Service.
+The app is containerized and runs on **Azure Container Apps**, pulling its image from **Azure Container Registry**, backed by **Azure Database for PostgreSQL**. Once the one-time infrastructure exists, **pushing to `main` redeploys automatically** via `.github/workflows/azure-deploy.yml`: GitHub Actions logs into Azure with **OIDC** (no stored credentials), builds the image with `az acr build`, and rolls it out with `az containerapp update`.
 
-### 1. Create the database
-
-In the Azure portal, create **Azure Database for PostgreSQL → Flexible Server** (the Burstable B1ms tier is the cheapest). During setup:
-
-- Note the admin username and password.
-- Under **Networking**, allow access. For a quick start, enable **"Allow public access from Azure services"** and add a firewall rule for your own IP (so you can run `npm run db:init` locally). For production, prefer a VNet/private endpoint.
-
-Your connection string looks like:
+### How CI/CD works
 
 ```
-postgres://USER:PASSWORD@SERVERNAME.postgres.database.azure.com:5432/postgres?sslmode=require
+push to main ──▶ GitHub Actions ──▶ az login (OIDC) ──▶ az acr build ──▶ az containerapp update
 ```
 
-### 2. Create the web app
+The deploy identity is a federated Azure AD app whose role is **scoped to the `rg-candor` resource group only**, so the pipeline can't reach any other Azure resources. Required repo secrets (already configured): `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`.
 
-Create an **App Service** → Linux → **Node 20 LTS** runtime. Note the app name (e.g. `anonymous-feedback`) — it must match `AZURE_WEBAPP_NAME` in the workflow file.
+### One-time infrastructure (already provisioned)
 
-In **App Service → Settings → Configuration → General settings**, set the **Startup Command** to:
+Everything lives in the isolated `rg-candor` resource group, region `southeastasia`:
 
-```
-npm start
-```
+| Resource | Name | Notes |
+|----------|------|-------|
+| Resource group | `rg-candor` | isolation boundary |
+| Container Registry | `candoracrcrkbte` | Basic, holds the `candor` image |
+| PostgreSQL Flexible Server | `candor-pg-crkbte` | Burstable B1ms, db `candor` |
+| Container Apps env | `candor-env` | managed environment |
+| Container App | `candor-app` | scale-to-zero, public ingress :3000 |
 
-In **Settings → Environment variables** (Application settings), add:
+Reproduce from scratch with the Azure CLI (`az group create` → `az acr create` → `az postgres flexible-server create` → `az containerapp env create` → `az acr build` → `az containerapp create`), passing `DATABASE_URL`, `ADMIN_SECRET`, and `ADMIN_PASSWORD` as Container App secrets.
 
-- `DATABASE_URL` — the connection string from step 1.
-- `ADMIN_PASSWORD` — the password for the admin dashboard. Make it long.
-- `ADMIN_SECRET` — a random string ≥ 32 chars for signing session cookies. Generate with:
-  `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
-- `SCM_DO_BUILD_DURING_DEPLOYMENT` = `false` (the GitHub Action already builds; this stops Azure rebuilding).
+### Runtime configuration
 
-### 3. Wire up the GitHub deploy
+These are set as **Container App secrets** (referenced by env vars), never committed:
 
-1. In the App Service **Overview → Get publish profile**, download the `.PublishSettings` file.
-2. In your GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**, name it `AZURE_WEBAPP_PUBLISH_PROFILE` and paste the entire file contents.
-3. Edit `AZURE_WEBAPP_NAME` in `.github/workflows/azure-deploy.yml` to your app's name.
-4. Push to `main` (GitHub Desktop works). The Action builds and deploys; watch it under the repo's **Actions** tab.
+- `DATABASE_URL` — `postgresql://USER:PASSWORD@SERVER.postgres.database.azure.com/candor?sslmode=require`
+- `ADMIN_PASSWORD` — password for the `/admin` dashboard.
+- `ADMIN_SECRET` — random string ≥ 32 chars for signing session cookies.
 
-### 4. Initialise the database (optional)
-
-The schema auto-creates on the first request, so you can skip this. To provision the tables and seed sample managers up front, run locally with `DATABASE_URL` set:
+Update one without a redeploy:
 
 ```bash
-npm install
-cp .env.example .env.local   # then fill in DATABASE_URL
-npm run db:init
+az containerapp secret set -g rg-candor -n candor-app --secrets admin-password=NEW_VALUE
+az containerapp update -g rg-candor -n candor-app   # restart to pick it up
 ```
 
-This creates the `managers`, `invite_tokens`, and `responses` tables and seeds four sample managers (Alex Morgan, Jordan Reyes, Sam Chen, Riley Patel).
+The schema (tables + sample managers) **auto-creates on the first request** — no migration step. To pre-provision instead, run `npm run db:init` locally with `DATABASE_URL` set.
 
-### 5. Set up your first survey
+### Set up your first survey
 
-1. Visit `https://your-app.azurewebsites.net/admin/login` and sign in with `ADMIN_PASSWORD`.
+1. Visit `https://<your-app>.azurecontainerapps.io/admin/login` and sign in with `ADMIN_PASSWORD`.
 2. Go to the **Manage** tab.
 3. Add your real managers; deactivate the seeded ones with the **Deactivate** button.
-4. Generate invitation codes — one per employee. Use **Copy links** and distribute by email, paper, or however your org prefers. Each link looks like `https://your-app.azurewebsites.net/?code=…` and pre-fills the code automatically.
-5. Employees open their link (or paste the code), and complete the survey.
+4. Generate invitation codes — one per employee. Use **Copy links** and distribute them. Each link looks like `https://<your-app>.azurecontainerapps.io/?code=…` and pre-fills the code automatically.
+5. Employees open their link (or paste the code) and complete the survey.
 
 ## Local development
 
