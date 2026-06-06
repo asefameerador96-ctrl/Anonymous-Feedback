@@ -1,82 +1,80 @@
 /**
- * Initialise the database schema and seed initial managers.
- * Run with: npm run db:init  (after setting env vars locally or via vercel env pull)
+ * Explicitly create the database schema and seed initial managers.
+ * Run with:  npm run db:init
  *
- * IMPORTANT ANONYMITY NOTES:
- * - The `responses` table has NO foreign key to invite_tokens.
- * - The `invite_tokens` table has NO column linking to a specific response.
- * - We only store a day-bucketed date, not a precise timestamp.
- * - No IP, user-agent, or session info is ever stored alongside responses.
+ * Reads DATABASE_URL from the environment, or from a local .env.local file.
+ * The running app also auto-creates the schema on first request (see
+ * lib/db.ts), so this script is optional — handy for provisioning an Azure
+ * database up front, before the first visitor arrives.
  */
 
-const { sql } = require("@vercel/postgres");
+const fs = require("fs");
+const path = require("path");
+const { Client } = require("pg");
+const { DDL, SEED_MANAGERS } = require("../lib/schema");
+
+// Minimal .env.local loader so `npm run db:init` works without extra deps.
+function loadDotEnvLocal() {
+  const file = path.join(__dirname, "..", ".env.local");
+  if (!fs.existsSync(file)) return;
+  for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*)\s*$/);
+    if (!m) continue;
+    const key = m[1];
+    if (process.env[key] !== undefined) continue;
+    let val = m[2].trim();
+    if (
+      (val.startsWith('"') && val.endsWith('"')) ||
+      (val.startsWith("'") && val.endsWith("'"))
+    ) {
+      val = val.slice(1, -1);
+    }
+    process.env[key] = val;
+  }
+}
 
 async function main() {
-  console.log("Creating tables...");
+  loadDotEnvLocal();
 
-  await sql`
-    CREATE TABLE IF NOT EXISTS managers (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      department TEXT,
-      active BOOLEAN DEFAULT TRUE,
-      created_at TIMESTAMPTZ DEFAULT NOW()
+  const connectionString =
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_CONNECTION_STRING;
+
+  if (!connectionString) {
+    console.error(
+      "DATABASE_URL is not set. Add it to .env.local or your environment " +
+        "(your Azure Database for PostgreSQL connection string)."
     );
-  `;
-
-  // Invite tokens: single-use, stored entirely separately from responses.
-  // The `used` flag flips on submission but the token is NEVER joined
-  // back to a response row.
-  await sql`
-    CREATE TABLE IF NOT EXISTS invite_tokens (
-      token TEXT PRIMARY KEY,
-      used BOOLEAN DEFAULT FALSE,
-      created_at TIMESTAMPTZ DEFAULT NOW(),
-      expires_at TIMESTAMPTZ NOT NULL
-    );
-  `;
-
-  // Responses: the actual feedback. Note:
-  //  - no token column
-  //  - no IP, no user agent
-  //  - only a day bucket, not a precise timestamp
-  await sql`
-    CREATE TABLE IF NOT EXISTS responses (
-      id SERIAL PRIMARY KEY,
-      manager_id INTEGER REFERENCES managers(id),
-      manager_clarity SMALLINT,
-      manager_support SMALLINT,
-      manager_fairness SMALLINT,
-      manager_growth SMALLINT,
-      manager_comments TEXT,
-      culture_trust SMALLINT,
-      culture_inclusion SMALLINT,
-      culture_workload SMALLINT,
-      culture_voice SMALLINT,
-      culture_comments TEXT,
-      day_bucket DATE NOT NULL
-    );
-  `;
-
-  // Useful index for the dashboard aggregation
-  await sql`
-    CREATE INDEX IF NOT EXISTS idx_responses_manager
-      ON responses(manager_id);
-  `;
-
-  // Seed a few example managers if the table is empty
-  const { rows } = await sql`SELECT COUNT(*)::int AS c FROM managers;`;
-  if (rows[0].c === 0) {
-    console.log("Seeding example managers...");
-    await sql`
-      INSERT INTO managers (name, department) VALUES
-        ('Alex Morgan', 'Engineering'),
-        ('Jordan Reyes', 'Product'),
-        ('Sam Chen', 'Design'),
-        ('Riley Patel', 'Operations');
-    `;
+    process.exit(1);
   }
 
+  const sslDisabled =
+    process.env.PGSSL === "disable" || process.env.PGSSLMODE === "disable";
+
+  const client = new Client({
+    connectionString,
+    ssl: sslDisabled ? false : { rejectUnauthorized: false },
+  });
+
+  await client.connect();
+  console.log("Connected. Creating tables...");
+  for (const stmt of DDL) {
+    await client.query(stmt);
+  }
+
+  const { rows } = await client.query("SELECT COUNT(*)::int AS c FROM managers");
+  if (rows[0].c === 0) {
+    console.log("Seeding example managers...");
+    for (const [name, department] of SEED_MANAGERS) {
+      await client.query(
+        "INSERT INTO managers (name, department) VALUES ($1, $2)",
+        [name, department]
+      );
+    }
+  }
+
+  await client.end();
   console.log("Done.");
 }
 

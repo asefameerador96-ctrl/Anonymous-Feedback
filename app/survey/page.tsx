@@ -133,6 +133,10 @@ export default function Survey() {
   const managerComplete = MANAGER_QUESTIONS.every((q) => form[q.key]);
   const cultureComplete = CULTURE_QUESTIONS.every((q) => form[q.key]);
 
+  const selectedManager = managers.find((m) => m.id === form.manager_id);
+  const likertLabel = (v: number | undefined) =>
+    LIKERT.find((l) => l.v === v)?.label ?? "—";
+
   return (
     <main className="min-h-screen flex flex-col">
       <header className="px-8 py-6 flex justify-between items-center border-b border-mist">
@@ -310,6 +314,47 @@ export default function Survey() {
                 answers cannot be retrieved or edited. There is no link from
                 this submission back to you.
               </p>
+
+              <div className="border border-mist divide-y divide-mist mb-8">
+                <div className="px-4 py-3 flex justify-between gap-4">
+                  <span className="mono text-xs uppercase tracking-widest opacity-60">
+                    Manager
+                  </span>
+                  <span className="text-sm text-right">
+                    {selectedManager ? selectedManager.name : "—"}
+                  </span>
+                </div>
+                {MANAGER_QUESTIONS.map((q) => (
+                  <div
+                    key={q.key}
+                    className="px-4 py-3 flex justify-between gap-4"
+                  >
+                    <span className="text-sm opacity-80">{q.label}</span>
+                    <span className="mono text-xs whitespace-nowrap text-sage">
+                      {likertLabel(form[q.key])}
+                    </span>
+                  </div>
+                ))}
+                {CULTURE_QUESTIONS.map((q) => (
+                  <div
+                    key={q.key}
+                    className="px-4 py-3 flex justify-between gap-4"
+                  >
+                    <span className="text-sm opacity-80">{q.label}</span>
+                    <span className="mono text-xs whitespace-nowrap text-sage">
+                      {likertLabel(form[q.key])}
+                    </span>
+                  </div>
+                ))}
+                {(form.manager_comments || form.culture_comments) && (
+                  <div className="px-4 py-3">
+                    <span className="mono text-xs uppercase tracking-widest opacity-60">
+                      Comments included
+                    </span>
+                  </div>
+                )}
+              </div>
+
               {error && (
                 <p className="text-sm text-clay mono mb-4">{error}</p>
               )}

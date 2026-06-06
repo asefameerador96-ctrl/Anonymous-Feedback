@@ -2,6 +2,9 @@
   "name": "anonymous-feedback",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=18.18.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -9,14 +12,15 @@
     "db:init": "node scripts/init-db.js"
   },
   "dependencies": {
-    "@vercel/postgres": "^0.10.0",
-    "next": "14.2.5",
+    "next": "14.2.35",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "jose": "^5.6.3"
+    "jose": "^5.6.3",
+    "pg": "^8.13.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
+    "@types/pg": "^8.11.10",
     "@types/react": "^18.3.3",
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.39",

@@ -15,74 +15,86 @@ The admin dashboard shows aggregate ratings and a randomised stream of comments.
 
 ## Stack
 
-- **Next.js 14** (App Router) — Vercel's native framework
-- **Vercel Postgres** (Neon under the hood) — free tier, one click to provision
+- **Next.js 14** (App Router)
+- **Azure Database for PostgreSQL** (Flexible Server), accessed with **node-postgres (`pg`)** — works with any standard Postgres, not tied to one host
+- **Azure App Service** (Linux, Node 20) for hosting, deployed via GitHub Actions
 - **Tailwind CSS** — styling
 - **jose** — JWT for the admin session cookie
 - No analytics, no tracking scripts, no third-party JS
 
-## Deploy to Vercel — step by step
+The schema auto-creates on first request (see `lib/schema.js` + `lib/db.ts`), so a fresh database needs no manual migration step.
 
-### 1. Push this to GitHub
+## Deploy to Azure — step by step
 
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-gh repo create candor --private --source=. --push
-# or push to a manually created repo
+This deploys to **Azure App Service** with an **Azure Database for PostgreSQL** backend. Pushing to `main` on GitHub triggers the workflow in `.github/workflows/azure-deploy.yml`, which builds and ships to App Service.
+
+### 1. Create the database
+
+In the Azure portal, create **Azure Database for PostgreSQL → Flexible Server** (the Burstable B1ms tier is the cheapest). During setup:
+
+- Note the admin username and password.
+- Under **Networking**, allow access. For a quick start, enable **"Allow public access from Azure services"** and add a firewall rule for your own IP (so you can run `npm run db:init` locally). For production, prefer a VNet/private endpoint.
+
+Your connection string looks like:
+
+```
+postgres://USER:PASSWORD@SERVERNAME.postgres.database.azure.com:5432/postgres?sslmode=require
 ```
 
-### 2. Import the repo in Vercel
+### 2. Create the web app
 
-Go to [vercel.com/new](https://vercel.com/new), select your GitHub repo, and click **Import**. Don't deploy yet — click **Environment Variables** first.
+Create an **App Service** → Linux → **Node 20 LTS** runtime. Note the app name (e.g. `anonymous-feedback`) — it must match `AZURE_WEBAPP_NAME` in the workflow file.
 
-### 3. Add a Postgres database
+In **App Service → Settings → Configuration → General settings**, set the **Startup Command** to:
 
-In the Vercel project dashboard, go to **Storage → Create Database → Postgres**. Pick the free Hobby tier and create it. Vercel will automatically inject the `POSTGRES_*` env vars into your project.
+```
+npm start
+```
 
-### 4. Set the two app secrets
+In **Settings → Environment variables** (Application settings), add:
 
-In **Settings → Environment Variables**, add:
+- `DATABASE_URL` — the connection string from step 1.
+- `ADMIN_PASSWORD` — the password for the admin dashboard. Make it long.
+- `ADMIN_SECRET` — a random string ≥ 32 chars for signing session cookies. Generate with:
+  `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+- `SCM_DO_BUILD_DURING_DEPLOYMENT` = `false` (the GitHub Action already builds; this stops Azure rebuilding).
 
-- `ADMIN_PASSWORD` — the password you'll use to log into the admin dashboard. Make it long.
-- `ADMIN_SECRET` — a random string of at least 32 characters, used to sign session cookies. Generate one with: `openssl rand -hex 32`
+### 3. Wire up the GitHub deploy
 
-### 5. Deploy
+1. In the App Service **Overview → Get publish profile**, download the `.PublishSettings` file.
+2. In your GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**, name it `AZURE_WEBAPP_PUBLISH_PROFILE` and paste the entire file contents.
+3. Edit `AZURE_WEBAPP_NAME` in `.github/workflows/azure-deploy.yml` to your app's name.
+4. Push to `main` (GitHub Desktop works). The Action builds and deploys; watch it under the repo's **Actions** tab.
 
-Trigger a deploy (push a commit, or click **Redeploy** in Vercel). Wait ~30 seconds.
+### 4. Initialise the database (optional)
 
-### 6. Initialise the database
-
-Once deployed, you need to create the tables. Run this once from your local machine:
+The schema auto-creates on the first request, so you can skip this. To provision the tables and seed sample managers up front, run locally with `DATABASE_URL` set:
 
 ```bash
 npm install
-npx vercel link            # link this folder to your Vercel project
-npx vercel env pull .env.local
+cp .env.example .env.local   # then fill in DATABASE_URL
 npm run db:init
 ```
 
-This creates the `managers`, `invite_tokens`, and `responses` tables and seeds four sample managers (Alex Morgan, Jordan Reyes, Sam Chen, Riley Patel). Edit them in the admin panel after.
+This creates the `managers`, `invite_tokens`, and `responses` tables and seeds four sample managers (Alex Morgan, Jordan Reyes, Sam Chen, Riley Patel).
 
-### 7. Set up your first survey
+### 5. Set up your first survey
 
-1. Visit `https://your-app.vercel.app/admin/login` and sign in with `ADMIN_PASSWORD`.
+1. Visit `https://your-app.azurewebsites.net/admin/login` and sign in with `ADMIN_PASSWORD`.
 2. Go to the **Manage** tab.
-3. Add your actual managers (delete or rename the seeded ones via the database if you want them gone — or just deactivate by setting `active = false` in Postgres).
-4. Generate invitation codes — one per employee. Copy them. Distribute by email, paper, or however your org prefers.
-5. Employees visit the root URL, paste their code, and complete the survey.
+3. Add your real managers; deactivate the seeded ones with the **Deactivate** button.
+4. Generate invitation codes — one per employee. Use **Copy links** and distribute by email, paper, or however your org prefers. Each link looks like `https://your-app.azurewebsites.net/?code=…` and pre-fills the code automatically.
+5. Employees open their link (or paste the code), and complete the survey.
 
 ## Local development
 
 ```bash
 npm install
-npx vercel env pull .env.local
-npm run db:init      # only the first time
+cp .env.example .env.local   # fill in DATABASE_URL, ADMIN_PASSWORD, ADMIN_SECRET
 npm run dev
 ```
 
-App runs on `http://localhost:3000`.
+App runs on `http://localhost:3000`. Point `DATABASE_URL` at your Azure database (it's reachable from your machine if you added your IP to the firewall) or any local Postgres. For a local Postgres without TLS, also set `PGSSL=disable`.
 
 ## File map
 
@@ -99,17 +111,20 @@ app/
     managers/               Public list of active managers
     admin/login/            Admin password check, sets session cookie
     admin/results/          Aggregated results with k-anonymity threshold
-    admin/managers/         Add managers, generate invite tokens
+    admin/managers/         List/add/deactivate managers, generate invite tokens
 lib/
-  db.ts                     Postgres connection + threshold constant
+  db.ts                     pg connection pool, sql/query helpers, lazy schema init
+  schema.js                 Shared DDL + seed data (single source of truth)
   auth.ts                   Admin session JWT helpers
 scripts/
-  init-db.js                Create tables, seed managers
+  init-db.js                Optional explicit migration (tables + seed)
+.github/workflows/
+  azure-deploy.yml          Build + deploy to Azure App Service on push to main
 ```
 
 ## Adapting the questions
 
-Survey questions live in `app/survey/page.tsx` as `MANAGER_QUESTIONS` and `CULTURE_QUESTIONS`. If you change them, also update the corresponding columns in `scripts/init-db.js` and the aggregation in `app/api/admin/results/route.ts`.
+Survey questions live in `app/survey/page.tsx` as `MANAGER_QUESTIONS` and `CULTURE_QUESTIONS`. If you change them, also update the corresponding columns in `lib/schema.js` (the `responses` table) and the aggregation in `app/api/admin/results/route.ts`.
 
 ## Things to consider before going live
 

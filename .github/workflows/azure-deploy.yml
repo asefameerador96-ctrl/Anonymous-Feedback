@@ -1,0 +1,50 @@
+name: Deploy to Azure App Service
+
+# Pushing to main builds the app and deploys it to Azure App Service.
+# (You push via GitHub Desktop → this runs → the live site updates.)
+#
+# One-time setup before this works — see the "Deploy to Azure" section of
+# README.md:
+#   1. Create an Azure App Service (Linux, Node 20) and set AZURE_WEBAPP_NAME below.
+#   2. In the App Service → Settings → Environment variables, add:
+#        DATABASE_URL, ADMIN_PASSWORD, ADMIN_SECRET
+#   3. Download the App Service "publish profile" and add it to this repo as a
+#      GitHub secret named AZURE_WEBAPP_PUBLISH_PROFILE
+#      (GitHub → repo → Settings → Secrets and variables → Actions).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AZURE_WEBAPP_NAME: anonymous-feedback   # <-- change to your App Service name
+  NODE_VERSION: "20.x"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Prune dev dependencies
+        run: npm prune --omit=dev
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: .

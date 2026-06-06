@@ -31,15 +31,24 @@ type Results = {
   comments: { manager: string | null; culture: string | null }[];
 };
 
+type ManagerRow = {
+  id: number;
+  name: string;
+  department: string | null;
+  active: boolean;
+};
+
 export default function AdminDashboard() {
   const router = useRouter();
   const [data, setData] = useState<Results | null>(null);
   const [tab, setTab] = useState<"results" | "manage">("results");
+  const [managerRows, setManagerRows] = useState<ManagerRow[]>([]);
   const [newManagerName, setNewManagerName] = useState("");
   const [newManagerDept, setNewManagerDept] = useState("");
   const [tokenCount, setTokenCount] = useState(10);
   const [tokenDays, setTokenDays] = useState(30);
   const [generatedTokens, setGeneratedTokens] = useState<string[]>([]);
+  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function load() {
@@ -52,8 +61,19 @@ export default function AdminDashboard() {
     setData(d);
   }
 
+  async function loadManagers() {
+    const r = await fetch("/api/admin/managers");
+    if (r.status === 401) {
+      router.replace("/admin/login");
+      return;
+    }
+    const d = await r.json();
+    setManagerRows(d.managers || []);
+  }
+
   useEffect(() => {
     load();
+    loadManagers();
   }, []);
 
   async function addManager() {
@@ -71,11 +91,25 @@ export default function AdminDashboard() {
     setNewManagerName("");
     setNewManagerDept("");
     setBusy(false);
+    loadManagers();
+    load();
+  }
+
+  async function toggleManager(id: number, active: boolean) {
+    setBusy(true);
+    await fetch("/api/admin/managers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_active", id, active }),
+    });
+    setBusy(false);
+    loadManagers();
     load();
   }
 
   async function genTokens() {
     setBusy(true);
+    setCopied(false);
     const r = await fetch("/api/admin/managers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -88,6 +122,20 @@ export default function AdminDashboard() {
     const d = await r.json();
     if (d.ok) setGeneratedTokens(d.tokens);
     setBusy(false);
+  }
+
+  async function copyTokens() {
+    const text = generatedTokens
+      .map((t) => `${baseUrl}/?code=${t}`)
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API unavailable (e.g. non-secure context) — the textarea
+      // below is still selectable as a fallback.
+    }
   }
 
   async function logout() {
@@ -270,6 +318,50 @@ export default function AdminDashboard() {
               </div>
             </section>
 
+            <section className="mb-16">
+              <h2 className="serif text-2xl mb-6">Current managers</h2>
+              <p className="opacity-70 text-sm mb-6 max-w-md">
+                Deactivated managers disappear from the survey's selection list
+                and from the results page, but their existing responses are kept
+                in the aggregates.
+              </p>
+              {managerRows.length === 0 ? (
+                <p className="opacity-60 text-sm">No managers yet.</p>
+              ) : (
+                <div className="space-y-2 max-w-2xl">
+                  {managerRows.map((m) => (
+                    <div
+                      key={m.id}
+                      className={`flex justify-between items-center border p-4 ${
+                        m.active ? "border-mist" : "border-mist opacity-50"
+                      }`}
+                    >
+                      <div>
+                        <span className="serif text-lg mr-3">{m.name}</span>
+                        {m.department && (
+                          <span className="mono text-xs opacity-60">
+                            {m.department}
+                          </span>
+                        )}
+                        {!m.active && (
+                          <span className="mono text-xs uppercase tracking-widest text-clay ml-3">
+                            inactive
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        className="mono text-xs uppercase tracking-widest opacity-60 hover:opacity-100 disabled:opacity-30"
+                        disabled={busy}
+                        onClick={() => toggleManager(m.id, !m.active)}
+                      >
+                        {m.active ? "Deactivate" : "Reactivate"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
             <section>
               <h2 className="serif text-2xl mb-6">Generate invitation codes</h2>
               <p className="opacity-70 text-sm mb-6 max-w-md">
@@ -308,10 +400,18 @@ export default function AdminDashboard() {
               </div>
               {generatedTokens.length > 0 && (
                 <div className="border border-mist p-4 bg-white">
-                  <p className="mono text-xs uppercase tracking-widest opacity-60 mb-3">
-                    {generatedTokens.length} codes generated — copy now, they
-                    won't be shown again
-                  </p>
+                  <div className="flex justify-between items-center mb-3">
+                    <p className="mono text-xs uppercase tracking-widest opacity-60">
+                      {generatedTokens.length} codes generated — copy now, they
+                      won't be shown again
+                    </p>
+                    <button
+                      className="mono text-xs uppercase tracking-widest underline-hand"
+                      onClick={copyTokens}
+                    >
+                      {copied ? "Copied!" : "Copy links"}
+                    </button>
+                  </div>
                   <textarea
                     readOnly
                     style={{ minHeight: 200 }}

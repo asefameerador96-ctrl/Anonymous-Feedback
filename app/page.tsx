@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function Home() {
@@ -9,11 +9,11 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function validateAndGo(raw: string) {
+    const cleaned = raw.trim();
+    if (!cleaned) return;
     setError("");
     setLoading(true);
-    const cleaned = token.trim();
     try {
       const r = await fetch("/api/validate-token", {
         method: "POST",
@@ -36,6 +36,28 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Pick up an invite code handed out as a link (e.g. /?code=abc123), prefill
+  // it, scrub it from the address bar/history, and validate automatically.
+  useEffect(() => {
+    let code = new URLSearchParams(window.location.search).get("code");
+    if (!code && window.location.hash) {
+      const hash = window.location.hash.replace(/^#/, "");
+      code = new URLSearchParams(hash).get("code") || decodeURIComponent(hash);
+    }
+    if (code) {
+      const cleaned = code.trim();
+      setToken(cleaned);
+      window.history.replaceState(null, "", window.location.pathname);
+      validateAndGo(cleaned);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    validateAndGo(token);
   }
 
   return (
