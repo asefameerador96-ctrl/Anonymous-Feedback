@@ -44,4 +44,16 @@ export function checkAdminPassword(password: string): boolean {
   return diff === 0;
 }
 
+/**
+ * Verify the admin login email. If ADMIN_EMAIL is not configured, the email
+ * check is skipped (the dashboard stays password-only for backward
+ * compatibility). Comparison is case-insensitive and whitespace-trimmed.
+ */
+export function checkAdminEmail(email: unknown): boolean {
+  const expected = process.env.ADMIN_EMAIL;
+  if (!expected) return true;
+  if (typeof email !== "string") return false;
+  return email.trim().toLowerCase() === expected.trim().toLowerCase();
+}
+
 export const ADMIN_COOKIE_NAME = COOKIE_NAME;

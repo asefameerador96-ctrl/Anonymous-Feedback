@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   checkAdminPassword,
+  checkAdminEmail,
   createAdminSession,
   ADMIN_COOKIE_NAME,
 } from "@/lib/auth";
@@ -8,8 +9,10 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  const { password } = await req.json().catch(() => ({ password: "" }));
-  if (!password || !checkAdminPassword(password)) {
+  const { email, password } = await req
+    .json()
+    .catch(() => ({ email: "", password: "" }));
+  if (!password || !checkAdminPassword(password) || !checkAdminEmail(email)) {
     // Add a small artificial delay to slow brute force
     await new Promise((r) => setTimeout(r, 500));
     return NextResponse.json({ ok: false }, { status: 401 });

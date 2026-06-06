@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function AdminLogin() {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -16,11 +17,11 @@ export default function AdminLogin() {
     const r = await fetch("/api/admin/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ email, password }),
     });
     setLoading(false);
     if (r.ok) router.push("/admin");
-    else setError("Incorrect password.");
+    else setError("Incorrect email or password.");
   }
 
   return (
@@ -33,13 +34,25 @@ export default function AdminLogin() {
         <form onSubmit={submit} className="space-y-6">
           <div>
             <label className="mono text-xs uppercase tracking-widest opacity-60 block mb-2">
+              Email
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="username"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="mono text-xs uppercase tracking-widest opacity-60 block mb-2">
               Password
             </label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              autoFocus
+              autoComplete="current-password"
             />
           </div>
           {error && <p className="text-sm text-clay mono">{error}</p>}

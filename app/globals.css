@@ -72,6 +72,7 @@ body::before {
 
 textarea,
 input[type="text"],
+input[type="email"],
 input[type="password"] {
   background: transparent;
   border: 1px solid var(--mist);
@@ -89,6 +90,7 @@ input[type="password"] {
 }
 textarea:focus,
 input[type="text"]:focus,
+input[type="email"]:focus,
 input[type="password"]:focus {
   border-bottom-color: var(--sage);
 }
