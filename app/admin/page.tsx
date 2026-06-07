@@ -19,7 +19,7 @@ type QuestionResult = {
 
 type Results = {
   org?: { name: string; plan: string; logo: string | null };
-  survey?: { title: string; description: string | null; status: string; collect_manager: boolean };
+  survey?: { id: number; title: string; description: string | null; status: string; collect_manager: boolean };
   threshold: number;
   total: number;
   suppressed: boolean;
@@ -130,25 +130,38 @@ export default function AdminDashboard() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   // survey builder
+  const [surveys, setSurveys] = useState<
+    { id: number; title: string; status: string; question_count: number; response_count: number }[]
+  >([]);
+  const [selectedSurveyId, setSelectedSurveyId] = useState<number | null>(null);
   const [surveyMeta, setSurveyMeta] = useState<SurveyMeta | null>(null);
   const [builderQs, setBuilderQs] = useState<BuilderQuestion[]>([]);
   const [metaSaved, setMetaSaved] = useState(false);
 
-  async function load() {
-    const r = await fetch("/api/admin/results");
+  async function load(surveyId?: number) {
+    const sid = surveyId ?? selectedSurveyId;
+    const r = await fetch(sid ? `/api/admin/results?survey_id=${sid}` : "/api/admin/results");
     if (r.status === 401) return router.replace("/admin/login");
     const d = await r.json();
     setData(d);
     if (d?.threshold != null) setThresholdInput(String(d.threshold));
   }
-  async function loadSurvey() {
-    const r = await fetch("/api/admin/survey");
+  async function loadSurvey(id?: number) {
+    const sid = id ?? selectedSurveyId;
+    const r = await fetch(sid ? `/api/admin/survey?id=${sid}` : "/api/admin/survey");
     if (r.status === 401) return router.replace("/admin/login");
     const d = await r.json();
-    if (d?.survey) {
+    setSurveys(d.surveys || []);
+    if (d.survey) {
       setSurveyMeta(d.survey);
       setBuilderQs(d.questions || []);
+      setSelectedSurveyId(d.survey.id);
     }
+  }
+  async function selectSurvey(id: number) {
+    setSelectedSurveyId(id);
+    await loadSurvey(id);
+    await load(id);
   }
   function postSurvey(body: any) {
     return fetch("/api/admin/survey", {
@@ -157,11 +170,36 @@ export default function AdminDashboard() {
       body: JSON.stringify(body),
     });
   }
+  async function createSurvey() {
+    const title = window.prompt("Name the new survey:", "New survey");
+    if (title == null) return;
+    setBusy(true);
+    const r = await postSurvey({ action: "create_survey", title });
+    const d = await r.json();
+    setBusy(false);
+    if (d.id) selectSurvey(d.id);
+  }
+  async function deleteSurvey() {
+    if (!selectedSurveyId) return;
+    if (!window.confirm("Delete this survey and all its responses? This cannot be undone.")) return;
+    setBusy(true);
+    const r = await postSurvey({ action: "delete_survey", id: selectedSurveyId });
+    const d = await r.json();
+    setBusy(false);
+    if (d.error === "last_survey") {
+      window.alert("You must keep at least one survey.");
+      return;
+    }
+    setSelectedSurveyId(null);
+    await loadSurvey();
+    await load();
+  }
   async function saveSurveyMeta() {
     if (!surveyMeta) return;
     setBusy(true);
     await postSurvey({
       action: "update_survey",
+      survey_id: surveyMeta.id,
       title: surveyMeta.title,
       description: surveyMeta.description,
       collect_manager: surveyMeta.collect_manager,
@@ -176,9 +214,11 @@ export default function AdminDashboard() {
     load();
   }
   async function addQuestion(type: string) {
+    if (!selectedSurveyId) return;
     setBusy(true);
     await postSurvey({
       action: "add_question",
+      survey_id: selectedSurveyId,
       text: "New question",
       type,
       weight: 1,
@@ -292,6 +332,7 @@ export default function AdminDashboard() {
       count: tokenCount,
       days: tokenDays,
       manager_id: tokenManager || null,
+      survey_id: selectedSurveyId,
     });
     const d = await r.json();
     if (d.ok) setGeneratedTokens(d.tokens);
@@ -348,7 +389,7 @@ export default function AdminDashboard() {
 
   async function genEmployeeCodes() {
     setBusy(true);
-    const r = await post({ action: "generate_employee_tokens", days: tokenDays });
+    const r = await post({ action: "generate_employee_tokens", days: tokenDays, survey_id: selectedSurveyId });
     const d = await r.json();
     if (d.ok) setRecipients(d.recipients);
     setBusy(false);
@@ -364,7 +405,8 @@ export default function AdminDashboard() {
   }
 
   async function downloadReport() {
-    const r = await fetch("/api/admin/report");
+    const sid = data?.survey?.id;
+    const r = await fetch(sid ? `/api/admin/report?survey_id=${sid}` : "/api/admin/report");
     if (!r.ok) return;
     const text = await r.text();
     downloadText("anonvey-report.csv", text);
@@ -427,13 +469,29 @@ export default function AdminDashboard() {
             <div className="flex flex-wrap gap-4 justify-between items-end mb-10">
               <div>
                 <p className="mono text-xs uppercase tracking-widest text-sage mb-2">
-                  {data.survey?.title || "Survey"} · min group size {data.threshold}
+                  Min group size {data.threshold}
                 </p>
                 <h1 className="serif text-4xl md:text-5xl">Results</h1>
               </div>
-              <button className="btn-ghost btn" onClick={downloadReport}>
-                Download CSV report
-              </button>
+              <div className="flex flex-wrap gap-3 items-end">
+                {surveys.length > 1 && (
+                  <select
+                    className="select"
+                    style={{ maxWidth: 240 }}
+                    value={data.survey?.id ?? ""}
+                    onChange={(e) => selectSurvey(Number(e.target.value))}
+                  >
+                    {surveys.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.title}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <button className="btn-ghost btn" onClick={downloadReport}>
+                  Download CSV report
+                </button>
+              </div>
             </div>
 
             {data.total === 0 ? (
@@ -542,10 +600,33 @@ export default function AdminDashboard() {
         {tab === "survey" && (
           <>
             <h1 className="serif text-4xl md:text-5xl mb-3">Survey builder</h1>
-            <p className="opacity-70 text-sm mb-10 max-w-xl">
+            <p className="opacity-70 text-sm mb-8 max-w-xl">
               Design the questionnaire respondents see — reorder, weight, and edit
-              questions and options. Changes apply to new responses.
+              questions and options. Run as many surveys as you like.
             </p>
+            <div className="flex flex-wrap gap-3 items-center mb-10">
+              <label className="mono text-xs uppercase tracking-widest opacity-60">Editing</label>
+              <select
+                className="select"
+                style={{ maxWidth: 300 }}
+                value={selectedSurveyId ?? ""}
+                onChange={(e) => selectSurvey(Number(e.target.value))}
+              >
+                {surveys.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.title} ({s.question_count}q · {s.response_count}r)
+                  </option>
+                ))}
+              </select>
+              <button className="btn-ghost btn !py-2 !px-3 !text-xs" onClick={createSurvey} disabled={busy}>
+                + New survey
+              </button>
+              {surveys.length > 1 && (
+                <button className="mono text-xs text-clay opacity-70 hover:opacity-100" onClick={deleteSurvey} disabled={busy}>
+                  Delete this survey
+                </button>
+              )}
+            </div>
             {!surveyMeta ? (
               <p className="opacity-60">Loading builder...</p>
             ) : (
@@ -793,6 +874,20 @@ export default function AdminDashboard() {
                     onChange={(e) => setTokenDays(parseInt(e.target.value) || 30)}
                     style={{ maxWidth: 100 }}
                   />
+                </div>
+                <div className="min-w-[150px]">
+                  <label className="label">For survey</label>
+                  <select
+                    className="select"
+                    value={selectedSurveyId ?? ""}
+                    onChange={(e) => selectSurvey(Number(e.target.value))}
+                  >
+                    {surveys.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.title}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="flex-1 min-w-[180px]">
                   <label className="label">Bind to manager</label>
