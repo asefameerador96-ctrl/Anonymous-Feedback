@@ -127,6 +127,8 @@ export default function AdminDashboard() {
   const [recipients, setRecipients] = useState<
     { name: string; email: string | null; token: string }[]
   >([]);
+  const [emailConfigured, setEmailConfigured] = useState(false);
+  const [emailMsg, setEmailMsg] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   // survey builder
@@ -412,6 +414,91 @@ export default function AdminDashboard() {
     downloadText("anonvey-report.csv", text);
   }
 
+  async function downloadPdf() {
+    if (!data) return;
+    setBusy(true);
+    try {
+      const { jsPDF } = await import("jspdf");
+      const autoTable = (await import("jspdf-autotable")).default;
+      const doc = new jsPDF();
+      const date = new Date().toISOString().slice(0, 10);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(18);
+      doc.text("Anonvey Report", 14, 20);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(11);
+      doc.text(`${data.org?.name || ""} — ${data.survey?.title || "Survey"}`, 14, 28);
+      doc.setFontSize(9);
+      doc.setTextColor(120);
+      doc.text(
+        `Generated ${date} · Minimum group size ${data.threshold} · ${data.total} responses`,
+        14,
+        34
+      );
+      doc.setTextColor(0);
+
+      if (data.suppressed) {
+        doc.setFontSize(11);
+        doc.text(
+          `Results are hidden until ${data.threshold} people respond (${data.total} so far).`,
+          14,
+          50
+        );
+        doc.save(`anonvey-report-${date}.pdf`);
+        return;
+      }
+
+      doc.setFontSize(13);
+      doc.text(
+        `Overall score: ${data.overallScore != null ? data.overallScore.toFixed(1) : "—"} / 100`,
+        14,
+        46
+      );
+
+      autoTable(doc, {
+        startY: 54,
+        head: [["Question", "Type", "Result", "n"]],
+        body: data.questions.map((q) => [q.text, q.type, pdfResult(q.result), String(pdfCount(q.result))]),
+        styles: { fontSize: 9, cellPadding: 2 },
+        headStyles: { fillColor: [26, 26, 26] },
+        columnStyles: { 0: { cellWidth: 95 } },
+      });
+
+      let y = (doc as any).lastAutoTable.finalY + 10;
+      if (data.survey?.collect_manager && data.managers.length) {
+        autoTable(doc, {
+          startY: y,
+          head: [["Manager", "Department", "Score /100", "n"]],
+          body: data.managers.map((m) => [
+            m.name,
+            m.department || "—",
+            m.suppressed ? "suppressed" : m.score != null ? m.score.toFixed(1) : "—",
+            String(m.count),
+          ]),
+          styles: { fontSize: 9, cellPadding: 2 },
+          headStyles: { fillColor: [26, 26, 26] },
+        });
+        y = (doc as any).lastAutoTable.finalY + 10;
+      }
+
+      if (data.comments.length) {
+        autoTable(doc, {
+          startY: y,
+          head: [["Question", "Comment"]],
+          body: data.comments.map((c) => [c.question, c.text]),
+          styles: { fontSize: 9, cellPadding: 2 },
+          headStyles: { fillColor: [184, 146, 122] },
+          columnStyles: { 0: { cellWidth: 55 } },
+        });
+      }
+
+      doc.save(`anonvey-report-${date}.pdf`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function logout() {
     await fetch("/api/admin/login", { method: "DELETE" });
     router.replace("/admin/login");
@@ -488,8 +575,11 @@ export default function AdminDashboard() {
                     ))}
                   </select>
                 )}
-                <button className="btn-ghost btn" onClick={downloadReport}>
-                  Download CSV report
+                <button className="btn-ghost btn" onClick={downloadReport} disabled={busy}>
+                  Export CSV
+                </button>
+                <button className="btn-ghost btn" onClick={downloadPdf} disabled={busy}>
+                  Export PDF
                 </button>
               </div>
             </div>
@@ -1095,6 +1185,19 @@ export default function AdminDashboard() {
 
 function csvCell(v: string) {
   return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+function pdfResult(r: any): string {
+  if (!r) return "—";
+  if (r.kind === "scale") return r.avg != null ? `${r.avg.toFixed(2)} / 5` : "—";
+  if (r.kind === "nps")
+    return `NPS ${r.nps ?? "—"} (avg ${r.avg != null ? r.avg.toFixed(1) : "—"}/10)`;
+  if (r.kind === "choice")
+    return r.distribution.map((d: any) => `${d.label}: ${d.pct}%`).join(", ");
+  return "see comments";
+}
+function pdfCount(r: any): number | string {
+  return r?.count ?? "";
 }
 
 function toLocal(iso: string | null): string {

@@ -10,7 +10,7 @@ const nextConfig = {
   // Load the Postgres driver from node_modules at runtime instead of bundling
   // it (pg pulls in optional native/edge shims that don't need bundling).
   experimental: {
-    serverComponentsExternalPackages: ["pg"],
+    serverComponentsExternalPackages: ["pg", "nodemailer"],
   },
 
   // Security/privacy headers applied to every route. These used to live in

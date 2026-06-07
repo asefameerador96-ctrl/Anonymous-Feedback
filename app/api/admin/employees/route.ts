@@ -2,10 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql, query } from "@/lib/db";
 import { verifyOrgSession } from "@/lib/auth";
 import { parseCSV, validateEmployeeCsv } from "@/lib/csv";
+import { ensureDefaultSurvey } from "@/lib/survey-db";
+import { isEmailConfigured, sendMail, inviteEmail } from "@/lib/email";
+import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const SITE = "https://anonvey.com";
 
 export async function GET() {
   const session = await verifyOrgSession();
@@ -19,7 +23,7 @@ export async function GET() {
     WHERE e.org_id = ${session.orgId}
     ORDER BY e.name ASC;
   `;
-  return NextResponse.json({ employees: rows });
+  return NextResponse.json({ employees: rows, emailConfigured: isEmailConfigured() });
 }
 
 export async function POST(req: NextRequest) {
@@ -120,6 +124,55 @@ export async function POST(req: NextRequest) {
   if (body.action === "clear_employees") {
     await sql`DELETE FROM employees WHERE org_id = ${orgId};`;
     return NextResponse.json({ ok: true });
+  }
+
+  // Generate a single-use code per employee (with an email) and email each
+  // person their personal link. Falls back gracefully if SMTP isn't configured.
+  if (body.action === "email_employee_codes") {
+    if (!isEmailConfigured()) {
+      return NextResponse.json(
+        { ok: false, error: "email_not_configured" },
+        { status: 400 }
+      );
+    }
+    let surveyId = body.survey_id ? Number(body.survey_id) : null;
+    if (surveyId != null) {
+      const ok = await sql`SELECT 1 FROM surveys WHERE id = ${surveyId} AND org_id = ${orgId} LIMIT 1;`;
+      if (!ok.rows.length) surveyId = null;
+    }
+    if (surveyId == null) surveyId = await ensureDefaultSurvey(orgId);
+
+    const daysValid = Math.min(Math.max(parseInt(String(body.days || "30"), 10) || 30, 1), 365);
+    const expiresAt = new Date(Date.now() + daysValid * 24 * 60 * 60 * 1000).toISOString();
+
+    const { rows: emps } = await sql`
+      SELECT id, name, email, manager_id FROM employees
+      WHERE org_id = ${orgId} AND email IS NOT NULL AND email <> ''
+      LIMIT 300;
+    `;
+    if (emps.length === 0) {
+      return NextResponse.json({ ok: false, error: "no_emails" }, { status: 400 });
+    }
+    const orgRow = await sql`SELECT name FROM organizations WHERE id = ${orgId} LIMIT 1;`;
+    const orgName = orgRow.rows[0]?.name || "Your organisation";
+
+    let sent = 0;
+    let failed = 0;
+    for (const e of emps as any[]) {
+      const token = crypto.randomBytes(16).toString("hex");
+      await sql`
+        INSERT INTO invite_tokens (token, expires_at, org_id, manager_id, employee_id, survey_id)
+        VALUES (${token}, ${expiresAt}, ${orgId}, ${e.manager_id ?? null}, ${e.id}, ${surveyId});
+      `;
+      const mail = inviteEmail(orgName, `${SITE}/respond?code=${token}`);
+      try {
+        await sendMail({ to: e.email, subject: mail.subject, html: mail.html, text: mail.text });
+        sent++;
+      } catch {
+        failed++;
+      }
+    }
+    return NextResponse.json({ ok: true, sent, failed, total: emps.length });
   }
 
   return NextResponse.json({ error: "unknown_action" }, { status: 400 });
