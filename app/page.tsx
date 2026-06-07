@@ -45,7 +45,7 @@ export default function Home() {
           <p className="fade-up mono text-xs uppercase tracking-[0.3em] text-sage mb-6">
             Anonymous surveys for organisations
           </p>
-          <h1 className="fade-up serif text-6xl md:text-8xl leading-[0.95] mb-8" style={{ animationDelay: "0.1s" }}>
+          <h1 className="fade-up serif text-5xl sm:text-7xl md:text-8xl leading-[0.95] mb-8" style={{ animationDelay: "0.1s" }}>
             Truly
             <br />
             <em className="text-clay">Anonymous.</em>
