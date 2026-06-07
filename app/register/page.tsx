@@ -17,10 +17,27 @@ export default function Register() {
   });
   const [errors, setErrors] = useState<Errors>({});
   const [loading, setLoading] = useState(false);
+  const [logo, setLogo] = useState("");
 
   function set(k: keyof typeof form, v: string) {
     setForm((f) => ({ ...f, [k]: v }));
     setErrors((e) => ({ ...e, [k]: "" }));
+  }
+
+  function onLogo(file?: File) {
+    setErrors((e) => ({ ...e, logo: "" }));
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setErrors((e) => ({ ...e, logo: "Please choose an image file." }));
+      return;
+    }
+    if (file.size > 250 * 1024) {
+      setErrors((e) => ({ ...e, logo: "Image must be under 250 KB." }));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setLogo(String(reader.result || ""));
+    reader.readAsDataURL(file);
   }
 
   async function submit(e: React.FormEvent) {
@@ -34,6 +51,7 @@ export default function Register() {
         body: JSON.stringify({
           ...form,
           employee_count: Number(form.employee_count),
+          logo,
         }),
       });
       const data = await r.json();
@@ -118,6 +136,36 @@ export default function Register() {
               onChange={(v) => set("password", v)}
               error={errors.password}
             />
+
+            <div>
+              <label className="mono text-xs uppercase tracking-widest opacity-60 block mb-2">
+                Company logo (optional)
+              </label>
+              <div className="flex items-center gap-4">
+                {logo ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={logo}
+                    alt="Logo preview"
+                    className="h-12 w-12 object-contain border border-mist bg-white p-1"
+                  />
+                ) : (
+                  <div className="h-12 w-12 border border-dashed border-mist flex items-center justify-center mono text-[9px] opacity-40">
+                    logo
+                  </div>
+                )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="mono text-xs"
+                  onChange={(e) => onLogo(e.target.files?.[0])}
+                />
+              </div>
+              <p className="mono text-[11px] opacity-50 mt-2">
+                Shown beside the Anonvey logo to your admins and survey takers.
+              </p>
+              {errors.logo && <p className="text-xs text-clay mono mt-2">{errors.logo}</p>}
+            </div>
 
             <button type="submit" className="btn w-full" disabled={loading}>
               {loading ? "Creating your workspace..." : "Create free workspace"}

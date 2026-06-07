@@ -25,7 +25,7 @@ type Culture = {
 };
 
 type Results = {
-  org?: { name: string; plan: string };
+  org?: { name: string; plan: string; logo: string | null };
   threshold: number;
   managers: ManagerResult[];
   culture: Culture;
@@ -289,8 +289,33 @@ export default function AdminDashboard() {
     <main className="min-h-screen">
       <header className="px-5 md:px-8 py-5 flex flex-wrap gap-y-3 justify-between items-center border-b border-mist">
         <div className="flex items-center gap-5 md:gap-6">
-          <div className="serif text-lg md:text-xl">
-            Anonvey <span className="opacity-50">/ {data.org?.name || "Admin"}</span>
+          <div className="flex items-center gap-3">
+            <span className="serif text-lg md:text-xl">Anonvey</span>
+            {data.org?.logo && (
+              <>
+                <span className="opacity-30">×</span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={data.org.logo}
+                  alt={`${data.org.name} logo`}
+                  className="h-7 w-7 object-contain"
+                />
+              </>
+            )}
+            <span className="opacity-50 serif text-lg md:text-xl">
+              / {data.org?.name || "Admin"}
+            </span>
+            {data.org?.plan && (
+              <span
+                className={`mono text-[9px] uppercase tracking-widest px-2 py-0.5 ${
+                  data.org.plan === "pro"
+                    ? "bg-sage text-paper"
+                    : "border border-mist opacity-70"
+                }`}
+              >
+                {data.org.plan}
+              </span>
+            )}
           </div>
           <nav className="flex gap-4 mono text-xs uppercase tracking-widest">
             {(["results", "manage", "employees"] as Tab[]).map((t) => (

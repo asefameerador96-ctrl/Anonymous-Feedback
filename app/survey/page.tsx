@@ -61,6 +61,9 @@ export default function Survey() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [bound, setBound] = useState(false); // code pre-assigned to a manager
+  const [org, setOrg] = useState<{ name: string; logo: string | null } | null>(
+    null
+  );
 
   useEffect(() => {
     const t = decodeURIComponent(window.location.hash.replace(/^#/, ""));
@@ -93,6 +96,7 @@ export default function Survey() {
       .then((r) => r.json())
       .then((d) => {
         setManagers(d.managers || []);
+        setOrg(d.org || null);
         if (d.boundManager) {
           // Code is tied to a specific manager — skip the picker.
           setBound(true);
@@ -153,10 +157,26 @@ export default function Survey() {
   return (
     <main className="min-h-screen flex flex-col">
       <header className="px-8 py-6 flex justify-between items-center border-b border-mist">
-        <div className="serif text-xl">Anonvey</div>
-        <div className="mono text-xs opacity-50">
-          Step {step + 1} of 4
+        <div className="flex items-center gap-2.5">
+          <span className="serif text-xl">Anonvey</span>
+          {org?.logo && (
+            <>
+              <span className="opacity-30">×</span>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={org.logo}
+                alt={`${org.name} logo`}
+                className="h-7 w-7 object-contain"
+              />
+            </>
+          )}
+          {org?.name && (
+            <span className="mono text-xs opacity-50 hidden sm:inline">
+              {org.name}
+            </span>
+          )}
         </div>
+        <div className="mono text-xs opacity-50">Step {step + 1} of 4</div>
       </header>
 
       <div className="flex-1 px-6 md:px-8 py-12">

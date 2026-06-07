@@ -33,16 +33,28 @@ export default function OwnerDashboard() {
     null
   );
 
+  async function load() {
+    const r = await fetch("/api/owner/stats");
+    if (r.status === 401) {
+      router.replace("/owner/login");
+      return;
+    }
+    setData(await r.json());
+  }
+
   useEffect(() => {
-    (async () => {
-      const r = await fetch("/api/owner/stats");
-      if (r.status === 401) {
-        router.replace("/owner/login");
-        return;
-      }
-      setData(await r.json());
-    })();
-  }, [router]);
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function setPlan(orgId: number, plan: string) {
+    await fetch("/api/owner/stats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_plan", orgId, plan }),
+    });
+    load();
+  }
 
   async function logout() {
     await fetch("/api/owner/login", { method: "DELETE" });
@@ -120,15 +132,19 @@ export default function OwnerDashboard() {
                     </td>
                     <td className="px-4 py-3 mono text-xs opacity-70">{o.domain || "—"}</td>
                     <td className="px-4 py-3">
-                      <span
-                        className={`mono text-[10px] uppercase tracking-widest px-2 py-1 ${
+                      <button
+                        title="Click to toggle plan (manual activation)"
+                        onClick={() =>
+                          setPlan(o.id, o.plan === "pro" ? "trial" : "pro")
+                        }
+                        className={`mono text-[10px] uppercase tracking-widest px-2 py-1 transition hover:opacity-80 ${
                           o.plan === "trial"
                             ? "bg-mist text-ink"
                             : "bg-sage text-paper"
                         }`}
                       >
-                        {o.plan}
-                      </span>
+                        {o.plan} ⇄
+                      </button>
                     </td>
                     <td className="px-4 py-3">{o.employee_count ?? "—"}</td>
                     <td className="px-4 py-3">{o.manager_count}</td>

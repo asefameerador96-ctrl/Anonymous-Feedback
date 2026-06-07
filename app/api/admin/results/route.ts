@@ -13,7 +13,7 @@ export async function GET() {
 
   // Organisation context, including its configurable anonymity threshold.
   const orgRes = await sql`
-    SELECT name, min_threshold, plan FROM organizations WHERE id = ${orgId} LIMIT 1;
+    SELECT name, min_threshold, plan, logo FROM organizations WHERE id = ${orgId} LIMIT 1;
   `;
   if (orgRes.rows.length === 0) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -94,7 +94,7 @@ export async function GET() {
   }
 
   return NextResponse.json({
-    org: { name: org.name, plan: org.plan },
+    org: { name: org.name, plan: org.plan, logo: org.logo || null },
     threshold,
     managers,
     culture,

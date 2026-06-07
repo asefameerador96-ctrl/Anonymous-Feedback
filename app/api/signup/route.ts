@@ -37,8 +37,21 @@ export async function POST(req: Request) {
   const phone = String(body.phone || "").trim().slice(0, 40);
   const password = String(body.password || "");
   const countRaw = Number(body.employee_count);
+  const logo = typeof body.logo === "string" ? body.logo : "";
 
   const errors: Record<string, string> = {};
+
+  // Logo is optional. If supplied it must be a small inline image data URL.
+  let logoValue: string | null = null;
+  if (logo) {
+    if (!/^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/.test(logo)) {
+      errors.logo = "Logo must be a PNG, JPG, WebP, GIF or SVG image.";
+    } else if (logo.length > 400_000) {
+      errors.logo = "Logo is too large — please use an image under ~250 KB.";
+    } else {
+      logoValue = logo;
+    }
+  }
 
   if (!company) errors.company_name = "Company name is required.";
 
@@ -81,8 +94,8 @@ export async function POST(req: Request) {
 
   // Create the organisation.
   const orgRes = await sql`
-    INSERT INTO organizations (name, domain, phone, employee_count)
-    VALUES (${company}, ${domain}, ${phone}, ${employeeCount})
+    INSERT INTO organizations (name, domain, phone, employee_count, logo)
+    VALUES (${company}, ${domain}, ${phone}, ${employeeCount}, ${logoValue})
     RETURNING id;
   `;
   const orgId = orgRes.rows[0].id as number;

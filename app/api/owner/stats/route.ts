@@ -1,8 +1,28 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { verifyOwnerSession } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
+
+// Manually activate / deactivate an organisation's paid plan. This is the
+// "make our own billing" primitive: collect payment however you like
+// (bank, bKash, invoice) then flip the org to Pro here — no payment gateway.
+export async function POST(req: NextRequest) {
+  if (!(await verifyOwnerSession())) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
+  const body = await req.json().catch(() => ({}));
+  if (body.action === "set_plan") {
+    const orgId = Number(body.orgId);
+    const plan = body.plan === "pro" ? "pro" : "trial";
+    if (!Number.isInteger(orgId)) {
+      return NextResponse.json({ error: "bad_org" }, { status: 400 });
+    }
+    await sql`UPDATE organizations SET plan = ${plan} WHERE id = ${orgId};`;
+    return NextResponse.json({ ok: true, plan });
+  }
+  return NextResponse.json({ error: "unknown_action" }, { status: 400 });
+}
 
 /**
  * Platform-owner view. Returns ONLY operational metadata — organisation
