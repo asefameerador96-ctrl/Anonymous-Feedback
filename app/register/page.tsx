@@ -1,20 +1,22 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 type Errors = Record<string, string>;
 
 export default function Register() {
+  const router = useRouter();
   const [form, setForm] = useState({
     company_name: "",
     work_email: "",
     phone: "",
     employee_count: "",
+    password: "",
   });
   const [errors, setErrors] = useState<Errors>({});
   const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState(false);
 
   function set(k: keyof typeof form, v: string) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -36,7 +38,8 @@ export default function Register() {
       });
       const data = await r.json();
       if (data.ok) {
-        setDone(true);
+        // Account created and logged in — go straight to the dashboard.
+        router.push("/admin");
       } else {
         setErrors(data.errors || { work_email: "Something went wrong." });
       }
@@ -45,30 +48,6 @@ export default function Register() {
     } finally {
       setLoading(false);
     }
-  }
-
-  if (done) {
-    return (
-      <main className="min-h-screen flex flex-col items-center justify-center px-8 text-center">
-        <div className="fade-up max-w-lg">
-          <p className="mono text-xs uppercase tracking-widest text-sage mb-6">
-            Request received
-          </p>
-          <h1 className="serif text-5xl md:text-6xl leading-tight mb-8">
-            You&apos;re on the <em className="text-clay">trial.</em>
-          </h1>
-          <p className="opacity-80 leading-relaxed mb-10">
-            Your workspace is being prepared. You can run up to ten surveys free
-            while you evaluate Anonvey — we&apos;ll email{" "}
-            <span className="mono text-sm">{form.work_email}</span> with your
-            sign-in details and the next step to onboard your organisation.
-          </p>
-          <Link href="/" className="mono text-xs uppercase tracking-widest underline-hand">
-            Back to home
-          </Link>
-        </div>
-      </main>
-    );
   }
 
   return (
@@ -130,6 +109,14 @@ export default function Register() {
               value={form.employee_count}
               onChange={(v) => set("employee_count", v)}
               error={errors.employee_count}
+            />
+            <Field
+              label="Choose a password"
+              type="password"
+              placeholder="at least 6 characters"
+              value={form.password}
+              onChange={(v) => set("password", v)}
+              error={errors.password}
             />
 
             <button type="submit" className="btn w-full" disabled={loading}>

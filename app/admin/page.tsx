@@ -25,6 +25,7 @@ type Culture = {
 };
 
 type Results = {
+  org?: { name: string; plan: string };
   threshold: number;
   managers: ManagerResult[];
   culture: Culture;
@@ -50,6 +51,8 @@ export default function AdminDashboard() {
   const [generatedTokens, setGeneratedTokens] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [thresholdInput, setThresholdInput] = useState("");
+  const [thresholdSaved, setThresholdSaved] = useState(false);
 
   async function load() {
     const r = await fetch("/api/admin/results");
@@ -59,6 +62,22 @@ export default function AdminDashboard() {
     }
     const d = await r.json();
     setData(d);
+    if (d?.threshold != null) setThresholdInput(String(d.threshold));
+  }
+
+  async function saveThreshold() {
+    const t = parseInt(thresholdInput, 10);
+    if (!Number.isInteger(t) || t < 1) return;
+    setBusy(true);
+    await fetch("/api/admin/managers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "set_threshold", threshold: t }),
+    });
+    setBusy(false);
+    setThresholdSaved(true);
+    setTimeout(() => setThresholdSaved(false), 2000);
+    load();
   }
 
   async function loadManagers() {
@@ -157,7 +176,10 @@ export default function AdminDashboard() {
     <main className="min-h-screen">
       <header className="px-8 py-6 flex justify-between items-center border-b border-mist">
         <div className="flex items-center gap-6">
-          <div className="serif text-xl">Anonvey / Admin</div>
+          <div className="serif text-xl">
+            Anonvey{" "}
+            <span className="opacity-50">/ {data.org?.name || "Admin"}</span>
+          </div>
           <nav className="flex gap-4 mono text-xs uppercase tracking-widest">
             <button
               onClick={() => setTab("results")}

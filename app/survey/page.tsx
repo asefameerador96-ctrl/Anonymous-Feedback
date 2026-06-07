@@ -83,11 +83,15 @@ export default function Survey() {
   }, [router]);
 
   useEffect(() => {
-    if (!tokenChecked) return;
-    fetch("/api/managers")
+    if (!tokenChecked || !token) return;
+    fetch("/api/managers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    })
       .then((r) => r.json())
       .then((d) => setManagers(d.managers || []));
-  }, [tokenChecked]);
+  }, [tokenChecked, token]);
 
   function setField(k: string, v: any) {
     setForm((f) => ({ ...f, [k]: v }));

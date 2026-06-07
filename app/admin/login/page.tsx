@@ -27,10 +27,13 @@ export default function AdminLogin() {
   return (
     <main className="min-h-screen flex items-center justify-center px-8">
       <div className="max-w-sm w-full">
-        <p className="mono text-xs uppercase tracking-widest text-sage mb-6">
-          Restricted
+        <a href="/" className="serif text-2xl block mb-8">
+          Anonvey
+        </a>
+        <p className="mono text-xs uppercase tracking-widest text-sage mb-3">
+          Admin sign in
         </p>
-        <h1 className="serif text-4xl mb-8">Admin</h1>
+        <h1 className="serif text-4xl mb-8">Welcome back</h1>
         <form onSubmit={submit} className="space-y-6">
           <div>
             <label className="mono text-xs uppercase tracking-widest opacity-60 block mb-2">
@@ -60,6 +63,12 @@ export default function AdminLogin() {
             {loading ? "..." : "Enter"}
           </button>
         </form>
+        <p className="mono text-xs opacity-60 mt-8">
+          New here?{" "}
+          <a href="/register" className="underline-hand text-ink">
+            Register your organisation
+          </a>
+        </p>
       </div>
     </main>
   );
