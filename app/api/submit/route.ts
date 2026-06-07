@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
     WHERE token = ${token}
       AND used = FALSE
       AND expires_at > NOW()
-    RETURNING org_id;
+    RETURNING org_id, manager_id;
   `;
   if (tokenResult.rowCount === 0) {
     return NextResponse.json(
@@ -58,11 +58,15 @@ export async function POST(req: NextRequest) {
     );
   }
   const orgId = tokenResult.rows[0].org_id ?? null;
+  const boundManagerId = tokenResult.rows[0].manager_id ?? null;
 
   // STEP 2: insert the response. Note: we do NOT reference the token here.
   // From this point on, there is no path in the database from a response
   // back to the token that authorised it.
-  const managerId = Number(body.manager_id);
+  // A manager-bound code dictates the manager; otherwise the respondent's
+  // selection is used.
+  const managerId =
+    boundManagerId != null ? Number(boundManagerId) : Number(body.manager_id);
   if (!Number.isInteger(managerId) || managerId <= 0) {
     return NextResponse.json(
       { ok: false, error: "bad_manager" },

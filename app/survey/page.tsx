@@ -60,6 +60,7 @@ export default function Survey() {
   const [step, setStep] = useState(0); // 0: manager pick, 1: manager q, 2: culture q, 3: review
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [bound, setBound] = useState(false); // code pre-assigned to a manager
 
   useEffect(() => {
     const t = decodeURIComponent(window.location.hash.replace(/^#/, ""));
@@ -90,7 +91,15 @@ export default function Survey() {
       body: JSON.stringify({ token }),
     })
       .then((r) => r.json())
-      .then((d) => setManagers(d.managers || []));
+      .then((d) => {
+        setManagers(d.managers || []);
+        if (d.boundManager) {
+          // Code is tied to a specific manager — skip the picker.
+          setBound(true);
+          setForm((f) => ({ ...f, manager_id: d.boundManager.id }));
+          setStep((s) => (s === 0 ? 1 : s));
+        }
+      });
   }, [tokenChecked, token]);
 
   function setField(k: string, v: any) {
@@ -240,9 +249,11 @@ export default function Survey() {
                 </div>
               </div>
               <div className="flex gap-3 mt-12">
-                <button className="btn-ghost btn" onClick={() => setStep(0)}>
-                  Back
-                </button>
+                {!bound && (
+                  <button className="btn-ghost btn" onClick={() => setStep(0)}>
+                    Back
+                  </button>
+                )}
                 <button
                   className="btn"
                   disabled={!managerComplete}

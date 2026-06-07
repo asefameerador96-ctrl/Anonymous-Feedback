@@ -104,6 +104,37 @@ textarea {
   min-height: 100px;
 }
 
+/* Form label helper */
+.label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.6;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+/* Select styled to match the inputs */
+select.select {
+  background: var(--paper);
+  border: 1px solid var(--mist);
+  border-bottom: 1px solid var(--ink);
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  padding: 0.5rem 0;
+  font-family: inherit;
+  font-size: 1rem;
+  color: var(--ink);
+  width: 100%;
+  outline: none;
+  cursor: pointer;
+}
+select.select:focus {
+  border-bottom-color: var(--sage);
+}
+
 .btn {
   display: inline-block;
   padding: 0.75rem 1.75rem;
