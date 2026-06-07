@@ -10,6 +10,19 @@ function newToken() {
   return crypto.randomBytes(16).toString("hex");
 }
 
+// Resolve a requested survey id (validating org ownership), or fall back to the
+// org's default survey.
+async function resolveSurvey(orgId: number, raw: any): Promise<number> {
+  if (raw) {
+    const id = Number(raw);
+    if (Number.isInteger(id)) {
+      const ok = await sql`SELECT 1 FROM surveys WHERE id = ${id} AND org_id = ${orgId} LIMIT 1;`;
+      if (ok.rows.length) return id;
+    }
+  }
+  return ensureDefaultSurvey(orgId);
+}
+
 // GET: this organisation's managers (including inactive), with hierarchy.
 export async function GET() {
   const session = await verifyOrgSession();
@@ -114,7 +127,7 @@ export async function POST(req: NextRequest) {
     const expiresAt = new Date(
       Date.now() + daysValid * 24 * 60 * 60 * 1000
     ).toISOString();
-    const surveyId = await ensureDefaultSurvey(orgId);
+    const surveyId = await resolveSurvey(orgId, body.survey_id);
 
     const tokens: string[] = Array.from({ length: count }, newToken);
     const placeholders: string[] = [];
@@ -154,7 +167,7 @@ export async function POST(req: NextRequest) {
     const expiresAt = new Date(
       Date.now() + daysValid * 24 * 60 * 60 * 1000
     ).toISOString();
-    const surveyId = await ensureDefaultSurvey(orgId);
+    const surveyId = await resolveSurvey(orgId, body.survey_id);
 
     const out: { name: string; email: string | null; token: string }[] = [];
     const placeholders: string[] = [];
