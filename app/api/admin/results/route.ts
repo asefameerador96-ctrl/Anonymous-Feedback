@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { verifyOrgSession } from "@/lib/auth";
-import { getOrgSurvey } from "@/lib/survey-db";
+import { getOrgSurvey, getSurveyById } from "@/lib/survey-db";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +19,7 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await verifyOrgSession();
   if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const orgId = session.orgId;
@@ -32,7 +32,15 @@ export async function GET() {
   const orgRow = orgRes.rows[0];
   const threshold = Number(orgRow.min_threshold) || 5;
 
-  const data = await getOrgSurvey(orgId);
+  // Pick the survey to report on (?survey_id=), defaulting to the org's first.
+  const idParam = new URL(req.url).searchParams.get("survey_id");
+  let data = null;
+  if (idParam) {
+    const sid = Number(idParam);
+    const owns = await sql`SELECT 1 FROM surveys WHERE id = ${sid} AND org_id = ${orgId} LIMIT 1;`;
+    if (owns.rows.length) data = await getSurveyById(sid);
+  }
+  if (!data) data = await getOrgSurvey(orgId);
   if (!data) return NextResponse.json({ error: "no_survey" }, { status: 500 });
   const { survey, questions } = data;
 
@@ -129,6 +137,7 @@ export async function GET() {
   return NextResponse.json({
     org: { name: orgRow.name, plan: orgRow.plan, logo: orgRow.logo || null },
     survey: {
+      id: survey.id,
       title: survey.title,
       description: survey.description,
       status: survey.status,
