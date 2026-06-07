@@ -3,33 +3,50 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type ManagerResult = {
-  id: number;
-  name: string;
-  department: string | null;
-  response_count: number;
-  suppressed: boolean;
-  avg_clarity: number | null;
-  avg_support: number | null;
-  avg_fairness: number | null;
-  avg_growth: number | null;
-};
+type QResult =
+  | { kind: "scale"; avg: number | null; count: number }
+  | { kind: "nps"; avg: number | null; nps: number | null; count: number }
+  | { kind: "choice"; distribution: { label: string; count: number; pct: number }[]; count: number }
+  | { kind: "text"; count: number };
 
-type Culture = {
-  total: number;
-  suppressed: boolean;
-  avg_trust: number | null;
-  avg_inclusion: number | null;
-  avg_workload: number | null;
-  avg_voice: number | null;
+type QuestionResult = {
+  id: number;
+  text: string;
+  type: string;
+  weight: number;
+  result: QResult | null;
 };
 
 type Results = {
   org?: { name: string; plan: string; logo: string | null };
+  survey?: { title: string; description: string | null; status: string; collect_manager: boolean };
   threshold: number;
-  managers: ManagerResult[];
-  culture: Culture;
-  comments: { manager: string | null; culture: string | null }[];
+  total: number;
+  suppressed: boolean;
+  overallScore: number | null;
+  questions: QuestionResult[];
+  managers: { id: number; name: string; department: string | null; count: number; suppressed: boolean; score: number | null }[];
+  comments: { question: string; text: string }[];
+};
+
+type Opt = { label: string; weight: number };
+type BuilderQuestion = {
+  id: number;
+  position: number;
+  text: string;
+  type: "scale" | "nps" | "single" | "multi" | "text";
+  options: Opt[] | null;
+  weight: number;
+  required: boolean;
+};
+type SurveyMeta = {
+  id: number;
+  title: string;
+  description: string | null;
+  status: string;
+  collect_manager: boolean;
+  opens_at: string | null;
+  closes_at: string | null;
 };
 
 type ManagerRow = {
@@ -51,7 +68,15 @@ type Employee = {
   manager_name: string | null;
 };
 
-type Tab = "results" | "manage" | "employees";
+type Tab = "results" | "survey" | "manage" | "employees";
+
+const QTYPES = [
+  { value: "scale", label: "Scale (1–5)" },
+  { value: "nps", label: "NPS (0–10)" },
+  { value: "single", label: "Single choice" },
+  { value: "multi", label: "Multiple choice" },
+  { value: "text", label: "Free text" },
+] as const;
 
 function downloadText(filename: string, text: string) {
   const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
@@ -104,12 +129,84 @@ export default function AdminDashboard() {
   >([]);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // survey builder
+  const [surveyMeta, setSurveyMeta] = useState<SurveyMeta | null>(null);
+  const [builderQs, setBuilderQs] = useState<BuilderQuestion[]>([]);
+  const [metaSaved, setMetaSaved] = useState(false);
+
   async function load() {
     const r = await fetch("/api/admin/results");
     if (r.status === 401) return router.replace("/admin/login");
     const d = await r.json();
     setData(d);
     if (d?.threshold != null) setThresholdInput(String(d.threshold));
+  }
+  async function loadSurvey() {
+    const r = await fetch("/api/admin/survey");
+    if (r.status === 401) return router.replace("/admin/login");
+    const d = await r.json();
+    if (d?.survey) {
+      setSurveyMeta(d.survey);
+      setBuilderQs(d.questions || []);
+    }
+  }
+  function postSurvey(body: any) {
+    return fetch("/api/admin/survey", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  }
+  async function saveSurveyMeta() {
+    if (!surveyMeta) return;
+    setBusy(true);
+    await postSurvey({
+      action: "update_survey",
+      title: surveyMeta.title,
+      description: surveyMeta.description,
+      collect_manager: surveyMeta.collect_manager,
+      status: surveyMeta.status,
+      opens_at: surveyMeta.opens_at || null,
+      closes_at: surveyMeta.closes_at || null,
+    });
+    setBusy(false);
+    setMetaSaved(true);
+    setTimeout(() => setMetaSaved(false), 2000);
+    loadSurvey();
+    load();
+  }
+  async function addQuestion(type: string) {
+    setBusy(true);
+    await postSurvey({
+      action: "add_question",
+      text: "New question",
+      type,
+      weight: 1,
+      required: true,
+      options: type === "single" || type === "multi" ? [{ label: "Option 1", weight: 1 }, { label: "Option 2", weight: 0 }] : null,
+    });
+    setBusy(false);
+    loadSurvey();
+  }
+  async function saveQuestion(q: BuilderQuestion) {
+    setBusy(true);
+    await postSurvey({ action: "update_question", ...q });
+    setBusy(false);
+    loadSurvey();
+    load();
+  }
+  async function deleteQuestion(id: number) {
+    setBusy(true);
+    await postSurvey({ action: "delete_question", id });
+    setBusy(false);
+    loadSurvey();
+    load();
+  }
+  async function moveQuestion(id: number, direction: "up" | "down") {
+    setBusy(true);
+    await postSurvey({ action: "move_question", id, direction });
+    setBusy(false);
+    loadSurvey();
   }
   async function loadManagers() {
     const r = await fetch("/api/admin/managers");
@@ -128,6 +225,7 @@ export default function AdminDashboard() {
     load();
     loadManagers();
     loadEmployees();
+    loadSurvey();
   }, []);
 
   function post(body: any) {
@@ -318,7 +416,7 @@ export default function AdminDashboard() {
             )}
           </div>
           <nav className="flex gap-4 mono text-xs uppercase tracking-widest">
-            {(["results", "manage", "employees"] as Tab[]).map((t) => (
+            {(["results", "survey", "manage", "employees"] as Tab[]).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
@@ -340,7 +438,7 @@ export default function AdminDashboard() {
             <div className="flex flex-wrap gap-4 justify-between items-end mb-10">
               <div>
                 <p className="mono text-xs uppercase tracking-widest text-sage mb-2">
-                  Minimum group size: {data.threshold}
+                  {data.survey?.title || "Survey"} · min group size {data.threshold}
                 </p>
                 <h1 className="serif text-4xl md:text-5xl">Results</h1>
               </div>
@@ -349,92 +447,223 @@ export default function AdminDashboard() {
               </button>
             </div>
 
-            <section className="mb-16">
-              <h2 className="serif text-2xl mb-6">Organisation-wide culture</h2>
-              {data.culture.suppressed ? (
-                <SuppressedBox
-                  message={`Need ${data.threshold - data.culture.total} more responses before culture results can be shown.`}
-                />
-              ) : (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                  <Metric label="Trust" value={data.culture.avg_trust} />
-                  <Metric label="Inclusion" value={data.culture.avg_inclusion} />
-                  <Metric label="Workload" value={data.culture.avg_workload} />
-                  <Metric label="Voice" value={data.culture.avg_voice} />
-                </div>
-              )}
-              <p className="mono text-xs opacity-50 mt-4">
-                Based on {data.culture.total} response
-                {data.culture.total === 1 ? "" : "s"}.
+            {data.total === 0 ? (
+              <p className="opacity-60">
+                No responses yet. Build your survey, then generate codes in the
+                Manage tab.
               </p>
-            </section>
-
-            <section className="mb-16">
-              <h2 className="serif text-2xl mb-6">By manager</h2>
-              <div className="space-y-4">
-                {data.managers.map((m) => (
-                  <div key={m.id} className="border border-mist p-6">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <h3 className="serif text-xl">{m.name}</h3>
-                        {m.department && (
-                          <p className="mono text-xs opacity-60">{m.department}</p>
-                        )}
-                      </div>
-                      <p className="mono text-xs opacity-60">
-                        {m.response_count} response{m.response_count === 1 ? "" : "s"}
+            ) : data.suppressed ? (
+              <SuppressedBox
+                message={`Results are hidden until ${data.threshold} people respond — ${data.total} so far.`}
+              />
+            ) : (
+              <>
+                <section className="mb-14">
+                  <div className="flex items-end gap-10 flex-wrap">
+                    <div>
+                      <p className="mono text-xs uppercase tracking-widest opacity-60 mb-1">
+                        Overall score
+                      </p>
+                      <p className="serif text-6xl">
+                        {data.overallScore != null ? data.overallScore.toFixed(1) : "—"}
+                        <span className="text-xl opacity-40 ml-1">/100</span>
                       </p>
                     </div>
-                    {m.suppressed ? (
-                      <SuppressedBox
-                        message={`Suppressed — need ${
-                          data.threshold - m.response_count
-                        } more response(s) to show ratings.`}
-                      />
-                    ) : (
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <Metric label="Clarity" value={m.avg_clarity} small />
-                        <Metric label="Support" value={m.avg_support} small />
-                        <Metric label="Fairness" value={m.avg_fairness} small />
-                        <Metric label="Growth" value={m.avg_growth} small />
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section>
-              <h2 className="serif text-2xl mb-6">Comments (random order)</h2>
-              {data.comments.length === 0 ? (
-                <p className="opacity-60 text-sm">
-                  No comments to show yet, or below minimum threshold.
-                </p>
-              ) : (
-                <div className="space-y-4">
-                  {data.comments.map((c, i) => (
-                    <div key={i} className="border-l-2 border-clay pl-4 py-1">
-                      {c.manager && (
-                        <p className="mb-1">
-                          <span className="mono text-xs opacity-50 uppercase mr-2">
-                            Manager
-                          </span>
-                          {c.manager}
-                        </p>
-                      )}
-                      {c.culture && (
-                        <p>
-                          <span className="mono text-xs opacity-50 uppercase mr-2">
-                            Culture
-                          </span>
-                          {c.culture}
-                        </p>
-                      )}
+                    <div>
+                      <p className="mono text-xs uppercase tracking-widest opacity-60 mb-1">
+                        Responses
+                      </p>
+                      <p className="serif text-6xl">{data.total}</p>
                     </div>
-                  ))}
-                </div>
-              )}
-            </section>
+                  </div>
+                </section>
+
+                <section className="mb-14">
+                  <h2 className="serif text-2xl mb-6">By question</h2>
+                  <div className="space-y-5">
+                    {data.questions.map((q) => (
+                      <div key={q.id} className="border border-mist p-5">
+                        <div className="flex justify-between gap-4 items-start mb-3">
+                          <p className="serif text-lg">{q.text}</p>
+                          <span className="mono text-[10px] uppercase tracking-widest opacity-50 whitespace-nowrap">
+                            {q.type} · w{q.weight}
+                          </span>
+                        </div>
+                        <QuestionResultView r={q.result} />
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                {data.survey?.collect_manager && data.managers.length > 0 && (
+                  <section className="mb-14">
+                    <h2 className="serif text-2xl mb-6">By manager</h2>
+                    <div className="space-y-3">
+                      {data.managers.map((m) => (
+                        <div
+                          key={m.id}
+                          className="flex justify-between items-center border border-mist p-4"
+                        >
+                          <div>
+                            <span className="serif text-lg mr-3">{m.name}</span>
+                            {m.department && (
+                              <span className="mono text-xs opacity-60">{m.department}</span>
+                            )}
+                          </div>
+                          {m.suppressed ? (
+                            <span className="mono text-xs text-clay">
+                              suppressed ({m.count})
+                            </span>
+                          ) : (
+                            <span className="serif text-2xl">
+                              {m.score != null ? m.score.toFixed(1) : "—"}
+                              <span className="text-xs opacity-40 ml-1">
+                                /100 · {m.count}
+                              </span>
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                <section>
+                  <h2 className="serif text-2xl mb-6">Comments (random order)</h2>
+                  {data.comments.length === 0 ? (
+                    <p className="opacity-60 text-sm">No written comments yet.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      {data.comments.map((c, i) => (
+                        <div key={i} className="border-l-2 border-clay pl-4 py-1">
+                          <p className="mono text-[10px] uppercase tracking-widest opacity-50 mb-1">
+                            {c.question}
+                          </p>
+                          <p>{c.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              </>
+            )}
+          </>
+        )}
+
+        {tab === "survey" && (
+          <>
+            <h1 className="serif text-4xl md:text-5xl mb-3">Survey builder</h1>
+            <p className="opacity-70 text-sm mb-10 max-w-xl">
+              Design the questionnaire respondents see — reorder, weight, and edit
+              questions and options. Changes apply to new responses.
+            </p>
+            {!surveyMeta ? (
+              <p className="opacity-60">Loading builder...</p>
+            ) : (
+              <>
+                <section className="mb-14 max-w-2xl">
+                  <h2 className="serif text-2xl mb-5">Settings</h2>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="label">Title</label>
+                      <input
+                        type="text"
+                        value={surveyMeta.title}
+                        onChange={(e) => setSurveyMeta({ ...surveyMeta, title: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label className="label">Description</label>
+                      <textarea
+                        value={surveyMeta.description || ""}
+                        onChange={(e) => setSurveyMeta({ ...surveyMeta, description: e.target.value })}
+                        style={{ minHeight: 70 }}
+                      />
+                    </div>
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="label">Status</label>
+                        <select
+                          className="select"
+                          value={surveyMeta.status}
+                          onChange={(e) => setSurveyMeta({ ...surveyMeta, status: e.target.value })}
+                        >
+                          <option value="active">Active</option>
+                          <option value="draft">Draft (not accepting)</option>
+                          <option value="closed">Closed</option>
+                        </select>
+                      </div>
+                      <label className="flex items-center gap-2 sm:mt-7 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={surveyMeta.collect_manager}
+                          onChange={(e) => setSurveyMeta({ ...surveyMeta, collect_manager: e.target.checked })}
+                        />
+                        <span className="text-sm">Ask respondents to pick a manager</span>
+                      </label>
+                    </div>
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="label">Opens (optional)</label>
+                        <input
+                          type="datetime-local"
+                          value={toLocal(surveyMeta.opens_at)}
+                          onChange={(e) =>
+                            setSurveyMeta({ ...surveyMeta, opens_at: e.target.value ? new Date(e.target.value).toISOString() : null })
+                          }
+                        />
+                      </div>
+                      <div>
+                        <label className="label">Closes (optional)</label>
+                        <input
+                          type="datetime-local"
+                          value={toLocal(surveyMeta.closes_at)}
+                          onChange={(e) =>
+                            setSurveyMeta({ ...surveyMeta, closes_at: e.target.value ? new Date(e.target.value).toISOString() : null })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <button className="btn" onClick={saveSurveyMeta} disabled={busy}>
+                      {metaSaved ? "Saved!" : "Save settings"}
+                    </button>
+                  </div>
+                </section>
+
+                <section>
+                  <h2 className="serif text-2xl mb-5">Questions ({builderQs.length})</h2>
+                  <div className="space-y-4">
+                    {builderQs.map((q, i) => (
+                      <QuestionEditor
+                        key={q.id}
+                        q={q}
+                        index={i}
+                        total={builderQs.length}
+                        busy={busy}
+                        onSave={saveQuestion}
+                        onDelete={deleteQuestion}
+                        onMove={moveQuestion}
+                      />
+                    ))}
+                  </div>
+                  <div className="mt-6 flex flex-wrap gap-2 items-center">
+                    <span className="mono text-xs uppercase tracking-widest opacity-60 mr-2">
+                      Add question:
+                    </span>
+                    {QTYPES.map((t) => (
+                      <button
+                        key={t.value}
+                        className="btn-ghost btn !py-2 !px-3 !text-xs"
+                        disabled={busy}
+                        onClick={() => addQuestion(t.value)}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              </>
+            )}
           </>
         )}
 
@@ -784,22 +1013,150 @@ function csvCell(v: string) {
   return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
 }
 
-function Metric({
-  label,
-  value,
-  small,
-}: {
-  label: string;
-  value: number | null;
-  small?: boolean;
-}) {
-  return (
-    <div>
-      <p className="mono text-xs uppercase tracking-widest opacity-60 mb-1">{label}</p>
-      <p className={`serif ${small ? "text-3xl" : "text-4xl"}`}>
-        {value != null ? value.toFixed(2) : "—"}
-        <span className="text-sm opacity-40 ml-1">/5</span>
+function toLocal(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function QuestionResultView({ r }: { r: any }) {
+  if (!r) return <p className="opacity-50 mono text-xs">No data.</p>;
+  if (r.kind === "scale")
+    return (
+      <p className="serif text-3xl">
+        {r.avg != null ? r.avg.toFixed(2) : "—"}
+        <span className="text-sm opacity-40 ml-1">/5 · {r.count} answered</span>
       </p>
+    );
+  if (r.kind === "nps")
+    return (
+      <div className="flex items-end gap-6 flex-wrap">
+        <p className="serif text-3xl">
+          {r.nps != null ? r.nps : "—"}
+          <span className="text-sm opacity-40 ml-1">NPS</span>
+        </p>
+        <p className="mono text-xs opacity-60">
+          avg {r.avg != null ? r.avg.toFixed(1) : "—"}/10 · {r.count} answered
+        </p>
+      </div>
+    );
+  if (r.kind === "choice")
+    return (
+      <div className="space-y-2">
+        {r.distribution.map((d: any, i: number) => (
+          <div key={i}>
+            <div className="flex justify-between text-sm mb-1">
+              <span>{d.label}</span>
+              <span className="mono text-xs opacity-60">
+                {d.pct}% · {d.count}
+              </span>
+            </div>
+            <div className="h-2 bg-mist">
+              <div className="h-2 bg-sage" style={{ width: `${d.pct}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  return (
+    <p className="mono text-xs opacity-60">
+      {r.count} written response{r.count === 1 ? "" : "s"} — see Comments below.
+    </p>
+  );
+}
+
+function QuestionEditor({
+  q,
+  index,
+  total,
+  busy,
+  onSave,
+  onDelete,
+  onMove,
+}: {
+  q: BuilderQuestion;
+  index: number;
+  total: number;
+  busy: boolean;
+  onSave: (q: BuilderQuestion) => void;
+  onDelete: (id: number) => void;
+  onMove: (id: number, d: "up" | "down") => void;
+}) {
+  const [local, setLocal] = useState<BuilderQuestion>(q);
+  useEffect(() => {
+    setLocal(q);
+  }, [q]);
+  const isChoice = local.type === "single" || local.type === "multi";
+  const opts = local.options || [];
+
+  function setOpt(i: number, patch: Partial<Opt>) {
+    setLocal({ ...local, options: opts.map((o, idx) => (idx === i ? { ...o, ...patch } : o)) });
+  }
+
+  return (
+    <div className="border border-mist p-4">
+      <div className="flex gap-2 items-start">
+        <div className="flex flex-col gap-1 pt-1">
+          <button className="mono text-xs opacity-50 hover:opacity-100 disabled:opacity-20" disabled={busy || index === 0} onClick={() => onMove(q.id, "up")}>
+            ↑
+          </button>
+          <button className="mono text-xs opacity-50 hover:opacity-100 disabled:opacity-20" disabled={busy || index === total - 1} onClick={() => onMove(q.id, "down")}>
+            ↓
+          </button>
+        </div>
+        <div className="flex-1 space-y-3">
+          <input type="text" value={local.text} onChange={(e) => setLocal({ ...local, text: e.target.value })} />
+          <div className="flex flex-wrap gap-4 items-end">
+            <div>
+              <label className="label">Type</label>
+              <select className="select" value={local.type} onChange={(e) => setLocal({ ...local, type: e.target.value as BuilderQuestion["type"] })} style={{ minWidth: 150 }}>
+                {QTYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">Weight</label>
+              <input type="number" min={0} step={0.5} value={local.weight} onChange={(e) => setLocal({ ...local, weight: Number(e.target.value) })} style={{ maxWidth: 90 }} />
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer pb-2">
+              <input type="checkbox" checked={local.required} onChange={(e) => setLocal({ ...local, required: e.target.checked })} />
+              <span className="text-sm">Required</span>
+            </label>
+          </div>
+
+          {isChoice && (
+            <div className="border-l-2 border-mist pl-4 space-y-2">
+              <p className="mono text-[10px] uppercase tracking-widest opacity-60">Options (label · weight)</p>
+              {opts.map((o, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <input type="text" value={o.label} onChange={(e) => setOpt(i, { label: e.target.value })} className="flex-1" />
+                  <input type="number" value={o.weight} onChange={(e) => setOpt(i, { weight: Number(e.target.value) })} style={{ maxWidth: 80 }} title="weight" />
+                  <button className="mono text-xs text-clay opacity-70 hover:opacity-100" onClick={() => setLocal({ ...local, options: opts.filter((_, idx) => idx !== i) })}>
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <button className="mono text-xs underline-hand" onClick={() => setLocal({ ...local, options: [...opts, { label: "New option", weight: 0 }] })}>
+                + add option
+              </button>
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-1">
+            <button className="btn !py-2 !px-4 !text-xs" disabled={busy} onClick={() => onSave(local)}>
+              Save
+            </button>
+            <button className="mono text-xs opacity-50 hover:text-clay" disabled={busy} onClick={() => onDelete(q.id)}>
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

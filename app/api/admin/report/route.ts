@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { sql } from "@/lib/db";
-import { verifyOrgSession, OrgSession } from "@/lib/auth";
-import { dayBucket } from "@/lib/db";
+import { sql, dayBucket } from "@/lib/db";
+import { verifyOrgSession } from "@/lib/auth";
+import { getOrgSurvey } from "@/lib/survey-db";
 
 export const dynamic = "force-dynamic";
 
@@ -9,99 +9,113 @@ function csv(v: unknown): string {
   const s = v == null ? "" : String(v);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
+function avg(nums: number[]): string {
+  if (nums.length === 0) return "";
+  return (nums.reduce((s, n) => s + n, 0) / nums.length).toFixed(2);
+}
 
 export async function GET() {
-  const session: OrgSession | null = await verifyOrgSession();
-  if (!session) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  const session = await verifyOrgSession();
+  if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const orgId = session.orgId;
 
-  const orgRes = await sql`
-    SELECT name, min_threshold FROM organizations WHERE id = ${orgId} LIMIT 1;
-  `;
+  const orgRes = await sql`SELECT name, min_threshold FROM organizations WHERE id = ${orgId} LIMIT 1;`;
   const org = orgRes.rows[0] || { name: "Organisation", min_threshold: 5 };
   const threshold = Number(org.min_threshold) || 5;
 
-  const { rows: perManager } = await sql`
-    SELECT m.name, m.department,
-      COUNT(r.id)::int AS n,
-      AVG(r.manager_clarity)::float AS clarity,
-      AVG(r.manager_support)::float AS support,
-      AVG(r.manager_fairness)::float AS fairness,
-      AVG(r.manager_growth)::float AS growth
-    FROM managers m
-    LEFT JOIN responses r ON r.manager_id = m.id
-    WHERE m.active = TRUE AND m.org_id = ${orgId}
-    GROUP BY m.id, m.name, m.department
-    ORDER BY m.name ASC;
-  `;
+  const data = await getOrgSurvey(orgId);
+  if (!data) return NextResponse.json({ error: "no_survey" }, { status: 500 });
+  const { survey, questions } = data;
 
-  const { rows: cultureRows } = await sql`
-    SELECT COUNT(*)::int AS total,
-      AVG(culture_trust)::float AS trust,
-      AVG(culture_inclusion)::float AS inclusion,
-      AVG(culture_workload)::float AS workload,
-      AVG(culture_voice)::float AS voice
-    FROM responses WHERE org_id = ${orgId};
+  const { rows: responses } = await sql`
+    SELECT manager_id, answers, score FROM survey_responses WHERE survey_id = ${survey.id} LIMIT 5000;
   `;
-  const c = cultureRows[0];
-  const cultureHidden = c.total < threshold;
-  const fmt = (x: any) => (x == null ? "" : Number(x).toFixed(2));
+  const total = responses.length;
+  const hidden = total < threshold;
 
   const lines: string[] = [];
   lines.push(`Anonvey report,${csv(org.name)}`);
+  lines.push(`Survey,${csv(survey.title)}`);
   lines.push(`Generated (day),${dayBucket()}`);
   lines.push(`Minimum group size,${threshold}`);
+  lines.push(`Total responses,${total}`);
   lines.push("");
 
-  lines.push("Organisation-wide culture");
-  lines.push("Metric,Average (/5)");
-  if (cultureHidden) {
-    lines.push(`Suppressed (need ${threshold} responses; have ${c.total}),`);
-  } else {
-    lines.push(`Trust,${fmt(c.trust)}`);
-    lines.push(`Inclusion,${fmt(c.inclusion)}`);
-    lines.push(`Workload,${fmt(c.workload)}`);
-    lines.push(`Voice,${fmt(c.voice)}`);
+  if (hidden) {
+    lines.push(`Results suppressed — need ${threshold} responses, have ${total}.`);
+    return file(lines.join("\r\n"));
   }
-  lines.push(`Total responses,${c.total}`);
+
+  const scores = responses
+    .map((r: any) => (r.score == null ? null : Number(r.score)))
+    .filter((s: number | null): s is number => s != null);
+  lines.push(`Overall weighted score (0-100),${avg(scores)}`);
   lines.push("");
 
-  lines.push("By manager");
-  lines.push("Manager,Department,Responses,Clarity,Support,Fairness,Growth");
-  for (const m of perManager) {
-    const hidden = m.n < threshold;
-    lines.push(
-      [
-        csv(m.name),
-        csv(m.department),
-        m.n,
-        hidden ? "suppressed" : fmt(m.clarity),
-        hidden ? "suppressed" : fmt(m.support),
-        hidden ? "suppressed" : fmt(m.fairness),
-        hidden ? "suppressed" : fmt(m.growth),
-      ].join(",")
-    );
+  lines.push("Per question");
+  lines.push("Question,Type,Weight,Metric,Value,Responses");
+  for (const q of questions) {
+    const raw = responses
+      .map((r: any) => (r.answers ? r.answers[String(q.id)] : undefined))
+      .filter((v: any) => v != null && v !== "");
+    if (q.type === "scale") {
+      const nums = raw.map(Number).filter((n: number) => n >= 1 && n <= 5);
+      lines.push([csv(q.text), q.type, q.weight, "Average (1-5)", avg(nums), nums.length].join(","));
+    } else if (q.type === "nps") {
+      const nums = raw.map(Number).filter((n: number) => n >= 0 && n <= 10);
+      const prom = nums.filter((n: number) => n >= 9).length;
+      const det = nums.filter((n: number) => n <= 6).length;
+      const nps = nums.length ? Math.round(((prom - det) / nums.length) * 100) : "";
+      lines.push([csv(q.text), q.type, q.weight, "NPS", nps, nums.length].join(","));
+    } else if (q.type === "single" || q.type === "multi") {
+      const opts = q.options || [];
+      const counts = opts.map(() => 0);
+      let n = 0;
+      for (const v of raw) {
+        const idxs: any[] = q.type === "multi" ? (Array.isArray(v) ? v : []) : [v];
+        let counted = false;
+        for (const iv of idxs) {
+          const i = Number(iv);
+          if (Number.isInteger(i) && i >= 0 && i < counts.length) { counts[i]++; counted = true; }
+        }
+        if (counted) n++;
+      }
+      opts.forEach((o, i) => {
+        lines.push([csv(q.text), q.type, q.weight, csv(`Option: ${o.label}`), counts[i], n].join(","));
+      });
+    } else {
+      lines.push([csv(q.text), q.type, q.weight, "Free text", "", raw.length].join(","));
+    }
   }
   lines.push("");
+
+  if (survey.collect_manager) {
+    const { rows: mgrs } = await sql`SELECT id, name, department FROM managers WHERE org_id = ${orgId} AND active = TRUE ORDER BY name ASC;`;
+    lines.push("Per manager");
+    lines.push("Manager,Department,Responses,Score (0-100)");
+    for (const m of mgrs) {
+      const theirs = responses.filter((r: any) => r.manager_id === m.id);
+      const msc = theirs.map((r: any) => (r.score == null ? null : Number(r.score))).filter((s: any): s is number => s != null);
+      const val = theirs.length < threshold ? "suppressed" : avg(msc);
+      lines.push([csv(m.name), csv(m.department), theirs.length, val].join(","));
+    }
+    lines.push("");
+  }
 
   lines.push("Comments (random order)");
-  lines.push("Type,Comment");
-  if (!cultureHidden) {
-    const { rows: comments } = await sql`
-      SELECT manager_comments, culture_comments FROM responses
-      WHERE org_id = ${orgId}
-        AND (manager_comments IS NOT NULL OR culture_comments IS NOT NULL)
-      ORDER BY RANDOM() LIMIT 500;
-    `;
-    for (const cm of comments) {
-      if (cm.manager_comments) lines.push(`Manager,${csv(cm.manager_comments)}`);
-      if (cm.culture_comments) lines.push(`Culture,${csv(cm.culture_comments)}`);
+  lines.push("Question,Comment");
+  for (const q of questions) {
+    if (q.type !== "text") continue;
+    for (const r of responses) {
+      const v = r.answers ? r.answers[String(q.id)] : null;
+      if (typeof v === "string" && v.trim()) lines.push(`${csv(q.text)},${csv(v.trim())}`);
     }
   }
 
-  const body = lines.join("\r\n");
+  return file(lines.join("\r\n"));
+}
+
+function file(body: string) {
   return new NextResponse(body, {
     status: 200,
     headers: {

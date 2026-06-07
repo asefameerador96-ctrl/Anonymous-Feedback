@@ -4,46 +4,17 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type Manager = { id: number; name: string; department: string | null };
+type Option = { label: string; weight: number };
+type Question = {
+  id: number;
+  text: string;
+  type: "scale" | "nps" | "single" | "multi" | "text";
+  options: Option[] | null;
+  required: boolean;
+};
+type Org = { name: string; logo: string | null };
 
-const MANAGER_QUESTIONS = [
-  {
-    key: "manager_clarity",
-    label: "My manager sets clear expectations for my work.",
-  },
-  {
-    key: "manager_support",
-    label: "My manager supports me when I need help or face obstacles.",
-  },
-  {
-    key: "manager_fairness",
-    label: "My manager treats me and my colleagues fairly.",
-  },
-  {
-    key: "manager_growth",
-    label: "My manager actively invests in my growth and development.",
-  },
-] as const;
-
-const CULTURE_QUESTIONS = [
-  {
-    key: "culture_trust",
-    label: "I can be myself at work without fear of judgement.",
-  },
-  {
-    key: "culture_inclusion",
-    label: "Different perspectives are genuinely welcomed here.",
-  },
-  {
-    key: "culture_workload",
-    label: "My workload is sustainable over the long term.",
-  },
-  {
-    key: "culture_voice",
-    label: "When I raise concerns, they are taken seriously.",
-  },
-] as const;
-
-const LIKERT = [
+const SCALE = [
   { v: 1, label: "Strongly disagree" },
   { v: 2, label: "Disagree" },
   { v: 3, label: "Neutral" },
@@ -51,19 +22,29 @@ const LIKERT = [
   { v: 5, label: "Strongly agree" },
 ];
 
+const CLOSED_MESSAGES: Record<string, string> = {
+  used: "This invitation has already been used.",
+  expired: "This invitation has expired.",
+  closed: "This survey is closed.",
+  not_open: "This survey hasn't opened yet.",
+  invalid: "That invitation code wasn't recognised.",
+};
+
 export default function Survey() {
   const router = useRouter();
   const [token, setToken] = useState("");
-  const [tokenChecked, setTokenChecked] = useState(false);
+  const [status, setStatus] = useState<"loading" | "open" | "closed">("loading");
+  const [reason, setReason] = useState("invalid");
+  const [org, setOrg] = useState<Org | null>(null);
+  const [survey, setSurvey] = useState<{ title: string; description: string | null; collect_manager: boolean } | null>(null);
+  const [questions, setQuestions] = useState<Question[]>([]);
   const [managers, setManagers] = useState<Manager[]>([]);
-  const [form, setForm] = useState<Record<string, any>>({});
-  const [step, setStep] = useState(0); // 0: manager pick, 1: manager q, 2: culture q, 3: review
+  const [boundManager, setBoundManager] = useState<Manager | null>(null);
+  const [managerId, setManagerId] = useState<number | null>(null);
+  const [answers, setAnswers] = useState<Record<string, any>>({});
+  const [step, setStep] = useState<"manager" | "questions">("questions");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [bound, setBound] = useState(false); // code pre-assigned to a manager
-  const [org, setOrg] = useState<{ name: string; logo: string | null } | null>(
-    null
-  );
 
   useEffect(() => {
     const t = decodeURIComponent(window.location.hash.replace(/^#/, ""));
@@ -72,65 +53,71 @@ export default function Survey() {
       return;
     }
     setToken(t);
-    // Re-validate
-    fetch("/api/validate-token", {
+    fetch("/api/survey/form", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: t }),
     })
       .then((r) => r.json())
       .then((d) => {
-        if (!d.valid) router.replace("/");
-        else setTokenChecked(true);
+        if (!d.open) {
+          setReason(d.reason || "invalid");
+          setStatus("closed");
+          return;
+        }
+        setOrg(d.org || null);
+        setSurvey(d.survey);
+        setQuestions(d.questions || []);
+        setManagers(d.managers || []);
+        setBoundManager(d.boundManager || null);
+        if (d.boundManager) setManagerId(d.boundManager.id);
+        const needManager = d.survey.collect_manager && !d.boundManager;
+        setStep(needManager ? "manager" : "questions");
+        setStatus("open");
       })
-      .catch(() => router.replace("/"));
+      .catch(() => {
+        setReason("invalid");
+        setStatus("closed");
+      });
   }, [router]);
 
-  useEffect(() => {
-    if (!tokenChecked || !token) return;
-    fetch("/api/managers", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-    })
-      .then((r) => r.json())
-      .then((d) => {
-        setManagers(d.managers || []);
-        setOrg(d.org || null);
-        if (d.boundManager) {
-          // Code is tied to a specific manager — skip the picker.
-          setBound(true);
-          setForm((f) => ({ ...f, manager_id: d.boundManager.id }));
-          setStep((s) => (s === 0 ? 1 : s));
-        }
-      });
-  }, [tokenChecked, token]);
+  function setAnswer(qid: number, v: any) {
+    setAnswers((a) => ({ ...a, [qid]: v }));
+  }
 
-  function setField(k: string, v: any) {
-    setForm((f) => ({ ...f, [k]: v }));
+  function firstUnanswered(): Question | null {
+    for (const q of questions) {
+      const a = answers[q.id];
+      const empty = a == null || a === "" || (Array.isArray(a) && a.length === 0);
+      if (q.required && empty) return q;
+    }
+    return null;
   }
 
   async function submit() {
+    const miss = firstUnanswered();
+    if (miss) {
+      setError(`Please answer: "${miss.text}"`);
+      return;
+    }
     setSubmitting(true);
     setError("");
     try {
-      const payload = { ...form, token };
       const r = await fetch("/api/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ token, manager_id: managerId, answers }),
       });
-      const data = await r.json();
-      if (data.ok) {
-        // Clear the token from the URL before navigating
+      const d = await r.json();
+      if (d.ok) {
         window.location.hash = "";
         router.replace("/thank-you");
+      } else if (d.error === "validation") {
+        setError(d.message || "Please complete all required questions.");
+      } else if (d.error === "invalid_or_used_token") {
+        setError("This invitation can no longer be used.");
       } else {
-        setError(
-          data.error === "invalid_or_used_token"
-            ? "This invitation can no longer be used."
-            : "Couldn't submit. Please try again."
-        );
+        setError("Couldn't submit. Please try again.");
       }
     } catch {
       setError("Network error. Please try again.");
@@ -139,272 +126,109 @@ export default function Survey() {
     }
   }
 
-  if (!tokenChecked) {
+  if (status === "loading") {
     return (
       <main className="min-h-screen flex items-center justify-center">
-        <p className="mono text-xs opacity-50">Verifying invitation...</p>
+        <p className="mono text-xs opacity-50">Loading survey...</p>
       </main>
     );
   }
 
-  const managerComplete = MANAGER_QUESTIONS.every((q) => form[q.key]);
-  const cultureComplete = CULTURE_QUESTIONS.every((q) => form[q.key]);
+  if (status === "closed") {
+    return (
+      <main className="min-h-screen flex flex-col items-center justify-center px-8 text-center">
+        <p className="mono text-xs uppercase tracking-widest text-clay mb-4">Unavailable</p>
+        <h1 className="serif text-4xl mb-6">{CLOSED_MESSAGES[reason] || CLOSED_MESSAGES.invalid}</h1>
+        <a href="/" className="mono text-xs uppercase tracking-widest underline-hand">Return home</a>
+      </main>
+    );
+  }
 
-  const selectedManager = managers.find((m) => m.id === form.manager_id);
-  const likertLabel = (v: number | undefined) =>
-    LIKERT.find((l) => l.v === v)?.label ?? "—";
+  const needManager = survey?.collect_manager && !boundManager;
 
   return (
     <main className="min-h-screen flex flex-col">
-      <header className="px-8 py-6 flex justify-between items-center border-b border-mist">
+      <header className="px-6 md:px-8 py-5 flex justify-between items-center border-b border-mist">
         <div className="flex items-center gap-2.5">
           <span className="serif text-xl">Anonvey</span>
           {org?.logo && (
             <>
               <span className="opacity-30">×</span>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={org.logo}
-                alt={`${org.name} logo`}
-                className="h-7 w-7 object-contain"
-              />
+              <img src={org.logo} alt={`${org.name} logo`} className="h-7 w-7 object-contain" />
             </>
           )}
-          {org?.name && (
-            <span className="mono text-xs opacity-50 hidden sm:inline">
-              {org.name}
-            </span>
-          )}
+          {org?.name && <span className="mono text-xs opacity-50 hidden sm:inline">{org.name}</span>}
         </div>
-        <div className="mono text-xs opacity-50">Step {step + 1} of 4</div>
+        <span className="mono text-xs opacity-50">Anonymous</span>
       </header>
 
-      <div className="flex-1 px-6 md:px-8 py-12">
+      <div className="flex-1 px-6 md:px-8 py-10 md:py-12">
         <div className="max-w-2xl mx-auto">
-          {/* Step 0: Manager selection */}
-          {step === 0 && (
+          {step === "manager" && needManager ? (
             <div className="fade-up">
-              <p className="mono text-xs uppercase tracking-widest text-sage mb-4">
-                One · About your manager
-              </p>
-              <h2 className="serif text-3xl md:text-4xl mb-6">
-                Who is your direct manager?
-              </h2>
+              <p className="mono text-xs uppercase tracking-widest text-sage mb-4">About your manager</p>
+              <h2 className="serif text-3xl md:text-4xl mb-6">Who is your direct manager?</h2>
               <p className="opacity-70 mb-8 text-sm">
-                Your selection determines which manager your feedback is
-                aggregated under. Results are only shared in groups of five or
-                more.
+                Your selection determines which manager your feedback aggregates
+                under. Results are only shared in groups above the threshold.
               </p>
               <div className="space-y-2 mb-10">
                 {managers.map((m) => (
                   <label
                     key={m.id}
                     className={`block border p-4 cursor-pointer transition ${
-                      form.manager_id === m.id
-                        ? "border-ink bg-ink text-paper"
-                        : "border-mist hover:border-ink"
+                      managerId === m.id ? "border-ink bg-ink text-paper" : "border-mist hover:border-ink"
                     }`}
                   >
-                    <input
-                      type="radio"
-                      name="manager_id"
-                      className="hidden"
-                      checked={form.manager_id === m.id}
-                      onChange={() => setField("manager_id", m.id)}
-                    />
+                    <input type="radio" name="manager" className="hidden" checked={managerId === m.id} onChange={() => setManagerId(m.id)} />
                     <div className="flex justify-between items-center">
                       <span className="serif text-lg">{m.name}</span>
-                      {m.department && (
-                        <span className="mono text-xs opacity-60">
-                          {m.department}
-                        </span>
-                      )}
+                      {m.department && <span className="mono text-xs opacity-60">{m.department}</span>}
                     </div>
                   </label>
                 ))}
+                {managers.length === 0 && (
+                  <p className="opacity-60 text-sm">No managers configured. You can continue.</p>
+                )}
               </div>
-              <button
-                className="btn"
-                disabled={!form.manager_id}
-                onClick={() => setStep(1)}
-              >
+              <button className="btn" disabled={managers.length > 0 && !managerId} onClick={() => setStep("questions")}>
                 Continue
               </button>
             </div>
-          )}
-
-          {/* Step 1: Manager ratings */}
-          {step === 1 && (
+          ) : (
             <div className="fade-up">
-              <p className="mono text-xs uppercase tracking-widest text-sage mb-4">
-                Two · Your manager
-              </p>
-              <h2 className="serif text-3xl md:text-4xl mb-8">
-                How true do these feel?
-              </h2>
-              <div className="space-y-10">
-                {MANAGER_QUESTIONS.map((q) => (
-                  <RatingRow
-                    key={q.key}
-                    label={q.label}
-                    value={form[q.key]}
-                    onChange={(v) => setField(q.key, v)}
-                  />
+              <h1 className="serif text-3xl md:text-4xl mb-2">{survey?.title}</h1>
+              {survey?.description && <p className="opacity-70 mb-10">{survey.description}</p>}
+
+              <div className="space-y-12">
+                {questions.map((q, i) => (
+                  <div key={q.id}>
+                    <p className="serif text-xl mb-1 leading-snug">
+                      {q.text}
+                      {q.required && <span className="text-clay ml-1">*</span>}
+                    </p>
+                    <p className="mono text-[10px] uppercase tracking-widest opacity-40 mb-4">
+                      Question {i + 1} of {questions.length}
+                    </p>
+                    <QuestionInput q={q} value={answers[q.id]} onChange={(v) => setAnswer(q.id, v)} />
+                  </div>
                 ))}
-                <div>
-                  <label className="mono text-xs uppercase tracking-widest opacity-60 block mb-3">
-                    Anything else about your manager? (optional)
-                  </label>
-                  <textarea
-                    value={form.manager_comments || ""}
-                    onChange={(e) =>
-                      setField("manager_comments", e.target.value)
-                    }
-                    placeholder="Stay general — specific incidents or details can identify you."
-                    maxLength={2000}
-                  />
-                  <p className="mono text-xs opacity-40 mt-2">
-                    {(form.manager_comments || "").length} / 2000
-                  </p>
-                </div>
               </div>
+
+              {error && <p className="text-sm text-clay mono mt-8">{error}</p>}
+
               <div className="flex gap-3 mt-12">
-                {!bound && (
-                  <button className="btn-ghost btn" onClick={() => setStep(0)}>
-                    Back
-                  </button>
+                {needManager && (
+                  <button className="btn-ghost btn" onClick={() => setStep("manager")}>Back</button>
                 )}
-                <button
-                  className="btn"
-                  disabled={!managerComplete}
-                  onClick={() => setStep(2)}
-                >
-                  Continue
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Step 2: Culture */}
-          {step === 2 && (
-            <div className="fade-up">
-              <p className="mono text-xs uppercase tracking-widest text-sage mb-4">
-                Three · The wider culture
-              </p>
-              <h2 className="serif text-3xl md:text-4xl mb-8">
-                And the place itself?
-              </h2>
-              <div className="space-y-10">
-                {CULTURE_QUESTIONS.map((q) => (
-                  <RatingRow
-                    key={q.key}
-                    label={q.label}
-                    value={form[q.key]}
-                    onChange={(v) => setField(q.key, v)}
-                  />
-                ))}
-                <div>
-                  <label className="mono text-xs uppercase tracking-widest opacity-60 block mb-3">
-                    Anything else about the culture? (optional)
-                  </label>
-                  <textarea
-                    value={form.culture_comments || ""}
-                    onChange={(e) =>
-                      setField("culture_comments", e.target.value)
-                    }
-                    placeholder="What's the one thing you'd want leadership to truly understand?"
-                    maxLength={2000}
-                  />
-                  <p className="mono text-xs opacity-40 mt-2">
-                    {(form.culture_comments || "").length} / 2000
-                  </p>
-                </div>
-              </div>
-              <div className="flex gap-3 mt-12">
-                <button className="btn-ghost btn" onClick={() => setStep(1)}>
-                  Back
-                </button>
-                <button
-                  className="btn"
-                  disabled={!cultureComplete}
-                  onClick={() => setStep(3)}
-                >
-                  Review
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Step 3: Review */}
-          {step === 3 && (
-            <div className="fade-up">
-              <p className="mono text-xs uppercase tracking-widest text-sage mb-4">
-                Four · Final check
-              </p>
-              <h2 className="serif text-3xl md:text-4xl mb-6">
-                Ready when you are.
-              </h2>
-              <p className="opacity-70 mb-8 text-sm">
-                Once submitted, your invitation code becomes unusable and your
-                answers cannot be retrieved or edited. There is no link from
-                this submission back to you.
-              </p>
-
-              <div className="border border-mist divide-y divide-mist mb-8">
-                <div className="px-4 py-3 flex justify-between gap-4">
-                  <span className="mono text-xs uppercase tracking-widest opacity-60">
-                    Manager
-                  </span>
-                  <span className="text-sm text-right">
-                    {selectedManager ? selectedManager.name : "—"}
-                  </span>
-                </div>
-                {MANAGER_QUESTIONS.map((q) => (
-                  <div
-                    key={q.key}
-                    className="px-4 py-3 flex justify-between gap-4"
-                  >
-                    <span className="text-sm opacity-80">{q.label}</span>
-                    <span className="mono text-xs whitespace-nowrap text-sage">
-                      {likertLabel(form[q.key])}
-                    </span>
-                  </div>
-                ))}
-                {CULTURE_QUESTIONS.map((q) => (
-                  <div
-                    key={q.key}
-                    className="px-4 py-3 flex justify-between gap-4"
-                  >
-                    <span className="text-sm opacity-80">{q.label}</span>
-                    <span className="mono text-xs whitespace-nowrap text-sage">
-                      {likertLabel(form[q.key])}
-                    </span>
-                  </div>
-                ))}
-                {(form.manager_comments || form.culture_comments) && (
-                  <div className="px-4 py-3">
-                    <span className="mono text-xs uppercase tracking-widest opacity-60">
-                      Comments included
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {error && (
-                <p className="text-sm text-clay mono mb-4">{error}</p>
-              )}
-              <div className="flex gap-3">
-                <button className="btn-ghost btn" onClick={() => setStep(2)}>
-                  Back
-                </button>
-                <button
-                  className="btn"
-                  disabled={submitting}
-                  onClick={submit}
-                >
+                <button className="btn" disabled={submitting} onClick={submit}>
                   {submitting ? "Submitting..." : "Submit anonymously"}
                 </button>
               </div>
+              <p className="mono text-xs opacity-40 mt-6">
+                Once submitted, your code becomes unusable and your answers cannot be traced back to you.
+              </p>
             </div>
           )}
         </div>
@@ -413,35 +237,98 @@ export default function Survey() {
   );
 }
 
-function RatingRow({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number | undefined;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <div>
-      <p className="serif text-xl mb-4 leading-snug">{label}</p>
+function QuestionInput({ q, value, onChange }: { q: Question; value: any; onChange: (v: any) => void }) {
+  if (q.type === "scale") {
+    return (
       <div className="flex flex-wrap gap-2">
-        {LIKERT.map((opt) => (
-          <label key={opt.v} className="rating-pill cursor-pointer">
-            <input
-              type="radio"
-              name={label}
-              value={opt.v}
-              checked={value === opt.v}
-              onChange={() => onChange(opt.v)}
-              className="hidden peer"
-            />
-            <span className="block px-4 py-2 border border-mist mono text-xs uppercase tracking-wider peer-checked:bg-ink peer-checked:text-paper peer-checked:border-ink transition">
-              {opt.label}
-            </span>
+        {SCALE.map((opt) => (
+          <button
+            key={opt.v}
+            type="button"
+            onClick={() => onChange(opt.v)}
+            className={`px-4 py-2 border mono text-xs uppercase tracking-wider transition ${
+              value === opt.v ? "bg-ink text-paper border-ink" : "border-mist hover:border-ink"
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    );
+  }
+  if (q.type === "nps") {
+    return (
+      <div>
+        <div className="flex flex-wrap gap-1.5">
+          {Array.from({ length: 11 }, (_, n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => onChange(n)}
+              className={`w-10 h-10 border mono text-sm transition ${
+                value === n ? "bg-ink text-paper border-ink" : "border-mist hover:border-ink"
+              }`}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+        <div className="flex justify-between mono text-[10px] uppercase tracking-widest opacity-40 mt-2">
+          <span>Not likely</span>
+          <span>Very likely</span>
+        </div>
+      </div>
+    );
+  }
+  if (q.type === "single") {
+    return (
+      <div className="space-y-2">
+        {(q.options || []).map((o, idx) => (
+          <label
+            key={idx}
+            className={`block border p-3 cursor-pointer transition ${
+              value === idx ? "border-ink bg-ink text-paper" : "border-mist hover:border-ink"
+            }`}
+          >
+            <input type="radio" name={`q${q.id}`} className="hidden" checked={value === idx} onChange={() => onChange(idx)} />
+            {o.label}
           </label>
         ))}
       </div>
-    </div>
+    );
+  }
+  if (q.type === "multi") {
+    const arr: number[] = Array.isArray(value) ? value : [];
+    return (
+      <div className="space-y-2">
+        {(q.options || []).map((o, idx) => {
+          const on = arr.includes(idx);
+          return (
+            <label
+              key={idx}
+              className={`block border p-3 cursor-pointer transition ${
+                on ? "border-ink bg-ink text-paper" : "border-mist hover:border-ink"
+              }`}
+            >
+              <input
+                type="checkbox"
+                className="hidden"
+                checked={on}
+                onChange={() => onChange(on ? arr.filter((x) => x !== idx) : [...arr, idx])}
+              />
+              {o.label}
+            </label>
+          );
+        })}
+      </div>
+    );
+  }
+  return (
+    <textarea
+      value={value || ""}
+      onChange={(e) => onChange(e.target.value)}
+      maxLength={2000}
+      placeholder="Stay general — specific details can identify you."
+    />
   );
 }

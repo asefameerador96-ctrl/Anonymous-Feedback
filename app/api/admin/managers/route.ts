@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sql, query } from "@/lib/db";
 import { verifyOrgSession } from "@/lib/auth";
+import { ensureDefaultSurvey } from "@/lib/survey-db";
 import crypto from "crypto";
 
 export const dynamic = "force-dynamic";
@@ -113,17 +114,18 @@ export async function POST(req: NextRequest) {
     const expiresAt = new Date(
       Date.now() + daysValid * 24 * 60 * 60 * 1000
     ).toISOString();
+    const surveyId = await ensureDefaultSurvey(orgId);
 
     const tokens: string[] = Array.from({ length: count }, newToken);
     const placeholders: string[] = [];
     const params: any[] = [];
     tokens.forEach((t, i) => {
-      const b = i * 4;
-      placeholders.push(`($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4})`);
-      params.push(t, expiresAt, orgId, managerId);
+      const b = i * 5;
+      placeholders.push(`($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5})`);
+      params.push(t, expiresAt, orgId, managerId, surveyId);
     });
     await query(
-      `INSERT INTO invite_tokens (token, expires_at, org_id, manager_id) VALUES ${placeholders.join(
+      `INSERT INTO invite_tokens (token, expires_at, org_id, manager_id, survey_id) VALUES ${placeholders.join(
         ", "
       )}`,
       params
@@ -152,6 +154,7 @@ export async function POST(req: NextRequest) {
     const expiresAt = new Date(
       Date.now() + daysValid * 24 * 60 * 60 * 1000
     ).toISOString();
+    const surveyId = await ensureDefaultSurvey(orgId);
 
     const out: { name: string; email: string | null; token: string }[] = [];
     const placeholders: string[] = [];
@@ -159,14 +162,14 @@ export async function POST(req: NextRequest) {
     emps.forEach((e: any, i: number) => {
       const t = newToken();
       out.push({ name: e.name, email: e.email, token: t });
-      const b = i * 5;
+      const b = i * 6;
       placeholders.push(
-        `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5})`
+        `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6})`
       );
-      params.push(t, expiresAt, orgId, e.manager_id ?? null, e.id);
+      params.push(t, expiresAt, orgId, e.manager_id ?? null, e.id, surveyId);
     });
     await query(
-      `INSERT INTO invite_tokens (token, expires_at, org_id, manager_id, employee_id) VALUES ${placeholders.join(
+      `INSERT INTO invite_tokens (token, expires_at, org_id, manager_id, employee_id, survey_id) VALUES ${placeholders.join(
         ", "
       )}`,
       params

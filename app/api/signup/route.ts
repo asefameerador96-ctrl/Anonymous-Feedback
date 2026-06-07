@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { hashPassword, createOrgSession, ORG_COOKIE_NAME } from "@/lib/auth";
+import { ensureDefaultSurvey } from "@/lib/survey-db";
 
 export const dynamic = "force-dynamic";
 
@@ -114,6 +115,9 @@ export async function POST(req: Request) {
       ('Example Manager A', 'Engineering', ${orgId}),
       ('Example Manager B', 'Operations', ${orgId});
   `;
+
+  // Seed the default questionnaire so the org has an editable survey.
+  await ensureDefaultSurvey(orgId);
 
   // Log the new admin in.
   const token = await createOrgSession({ orgId, adminId, email });

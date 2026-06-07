@@ -1,103 +1,145 @@
 import { NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { verifyOrgSession } from "@/lib/auth";
+import { getOrgSurvey } from "@/lib/survey-db";
 
 export const dynamic = "force-dynamic";
 
+function avg(nums: number[]): number | null {
+  if (nums.length === 0) return null;
+  return Math.round((nums.reduce((s, n) => s + n, 0) / nums.length) * 100) / 100;
+}
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 export async function GET() {
   const session = await verifyOrgSession();
-  if (!session) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
+  if (!session) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const orgId = session.orgId;
 
-  // Organisation context, including its configurable anonymity threshold.
   const orgRes = await sql`
     SELECT name, min_threshold, plan, logo FROM organizations WHERE id = ${orgId} LIMIT 1;
   `;
-  if (orgRes.rows.length === 0) {
+  if (orgRes.rows.length === 0)
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  }
-  const org = orgRes.rows[0];
-  const threshold = Number(org.min_threshold) || 5;
+  const orgRow = orgRes.rows[0];
+  const threshold = Number(orgRow.min_threshold) || 5;
 
-  // Per-manager aggregates, scoped to this organisation.
-  const { rows: perManager } = await sql`
-    SELECT
-      m.id,
-      m.name,
-      m.department,
-      COUNT(r.id)::int AS response_count,
-      AVG(r.manager_clarity)::float AS avg_clarity,
-      AVG(r.manager_support)::float AS avg_support,
-      AVG(r.manager_fairness)::float AS avg_fairness,
-      AVG(r.manager_growth)::float AS avg_growth
-    FROM managers m
-    LEFT JOIN responses r ON r.manager_id = m.id
-    WHERE m.active = TRUE AND m.org_id = ${orgId}
-    GROUP BY m.id, m.name, m.department
-    ORDER BY m.name ASC;
+  const data = await getOrgSurvey(orgId);
+  if (!data) return NextResponse.json({ error: "no_survey" }, { status: 500 });
+  const { survey, questions } = data;
+
+  const { rows: responses } = await sql`
+    SELECT manager_id, answers, score FROM survey_responses
+    WHERE survey_id = ${survey.id}
+    LIMIT 5000;
   `;
+  const total = responses.length;
+  const suppressed = total < threshold;
 
-  const managers = perManager.map((row: any) => {
-    const suppressed = row.response_count < threshold;
-    return {
-      id: row.id,
-      name: row.name,
-      department: row.department,
-      response_count: row.response_count,
-      suppressed,
-      avg_clarity: suppressed ? null : Number(row.avg_clarity?.toFixed(2)),
-      avg_support: suppressed ? null : Number(row.avg_support?.toFixed(2)),
-      avg_fairness: suppressed ? null : Number(row.avg_fairness?.toFixed(2)),
-      avg_growth: suppressed ? null : Number(row.avg_growth?.toFixed(2)),
-    };
+  // Per-question aggregation (only when above threshold).
+  const comments: { question: string; text: string }[] = [];
+  const questionResults = questions.map((q) => {
+    const base = { id: q.id, text: q.text, type: q.type, weight: q.weight };
+    if (suppressed) return { ...base, result: null };
+
+    const raw = responses
+      .map((r: any) => (r.answers ? r.answers[String(q.id)] : undefined))
+      .filter((v: any) => v != null && v !== "");
+
+    if (q.type === "scale") {
+      const nums = raw.map(Number).filter((n) => n >= 1 && n <= 5);
+      return { ...base, result: { kind: "scale", avg: avg(nums), count: nums.length } };
+    }
+    if (q.type === "nps") {
+      const nums = raw.map(Number).filter((n) => n >= 0 && n <= 10);
+      const prom = nums.filter((n) => n >= 9).length;
+      const det = nums.filter((n) => n <= 6).length;
+      const nps = nums.length ? Math.round(((prom - det) / nums.length) * 100) : null;
+      return { ...base, result: { kind: "nps", avg: avg(nums), nps, count: nums.length } };
+    }
+    if (q.type === "single" || q.type === "multi") {
+      const opts = q.options || [];
+      const counts = opts.map(() => 0);
+      let n = 0;
+      for (const v of raw) {
+        const idxs: any[] = q.type === "multi" ? (Array.isArray(v) ? v : []) : [v];
+        let counted = false;
+        for (const iv of idxs) {
+          const i = Number(iv);
+          if (Number.isInteger(i) && i >= 0 && i < counts.length) {
+            counts[i]++;
+            counted = true;
+          }
+        }
+        if (counted) n++;
+      }
+      const distribution = opts.map((o, i) => ({
+        label: o.label,
+        count: counts[i],
+        pct: n ? Math.round((counts[i] / n) * 100) : 0,
+      }));
+      return { ...base, result: { kind: "choice", distribution, count: n } };
+    }
+    // text
+    for (const v of raw) {
+      if (typeof v === "string" && v.trim())
+        comments.push({ question: q.text, text: v.trim() });
+    }
+    return { ...base, result: { kind: "text", count: raw.length } };
   });
 
-  // Org-wide culture aggregates.
-  const { rows: cultureRows } = await sql`
-    SELECT
-      COUNT(*)::int AS total,
-      AVG(culture_trust)::float AS avg_trust,
-      AVG(culture_inclusion)::float AS avg_inclusion,
-      AVG(culture_workload)::float AS avg_workload,
-      AVG(culture_voice)::float AS avg_voice
-    FROM responses
-    WHERE org_id = ${orgId};
-  `;
-  const c = cultureRows[0];
-  const cultureSuppressed = c.total < threshold;
-  const culture = {
-    total: c.total,
-    suppressed: cultureSuppressed,
-    avg_trust: cultureSuppressed ? null : Number(c.avg_trust?.toFixed(2)),
-    avg_inclusion: cultureSuppressed ? null : Number(c.avg_inclusion?.toFixed(2)),
-    avg_workload: cultureSuppressed ? null : Number(c.avg_workload?.toFixed(2)),
-    avg_voice: cultureSuppressed ? null : Number(c.avg_voice?.toFixed(2)),
-  };
+  // Overall weighted score (average of per-response scores).
+  const scores = responses
+    .map((r: any) => (r.score == null ? null : Number(r.score)))
+    .filter((s: number | null): s is number => s != null);
+  const overallScore = suppressed ? null : avg(scores);
 
-  // Comments: only above threshold, shuffled so reading order can't be matched
-  // to submission order.
-  let comments: { manager: string | null; culture: string | null }[] = [];
-  if (!cultureSuppressed) {
-    const { rows: commentRows } = await sql`
-      SELECT manager_comments, culture_comments FROM responses
-      WHERE org_id = ${orgId}
-        AND (manager_comments IS NOT NULL OR culture_comments IS NOT NULL)
-      ORDER BY RANDOM()
-      LIMIT 200;
+  // Per-manager breakdown (overall score per manager), threshold-gated.
+  let managers: any[] = [];
+  if (survey.collect_manager) {
+    const { rows: mgrRows } = await sql`
+      SELECT id, name, department FROM managers WHERE org_id = ${orgId} AND active = TRUE ORDER BY name ASC;
     `;
-    comments = commentRows.map((r: any) => ({
-      manager: r.manager_comments,
-      culture: r.culture_comments,
-    }));
+    managers = mgrRows.map((m: any) => {
+      const theirs = responses.filter((r: any) => r.manager_id === m.id);
+      const count = theirs.length;
+      const sup = count < threshold;
+      const mscores = theirs
+        .map((r: any) => (r.score == null ? null : Number(r.score)))
+        .filter((s: number | null): s is number => s != null);
+      return {
+        id: m.id,
+        name: m.name,
+        department: m.department,
+        count,
+        suppressed: sup,
+        score: sup ? null : avg(mscores),
+      };
+    });
   }
 
   return NextResponse.json({
-    org: { name: org.name, plan: org.plan, logo: org.logo || null },
+    org: { name: orgRow.name, plan: orgRow.plan, logo: orgRow.logo || null },
+    survey: {
+      title: survey.title,
+      description: survey.description,
+      status: survey.status,
+      collect_manager: survey.collect_manager,
+    },
     threshold,
+    total,
+    suppressed,
+    overallScore,
+    questions: questionResults,
     managers,
-    culture,
-    comments,
+    comments: suppressed ? [] : shuffle(comments).slice(0, 300),
   });
 }

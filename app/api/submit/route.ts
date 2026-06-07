@@ -1,31 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sql, dayBucket } from "@/lib/db";
+import { getSurveyById, getOrgSurvey } from "@/lib/survey-db";
+import { validateAnswers, scoreResponse } from "@/lib/survey";
 
 export const dynamic = "force-dynamic";
 
 /**
  * Anonymity contract for this route:
- *  - We DO NOT log the request IP, user agent, or any header.
- *  - We mark the invite token as `used` in a SEPARATE transaction
- *    from the response insert, and we do NOT store the token alongside
- *    the response.
+ *  - We never log the request IP, user agent, or any header.
+ *  - The invite token is consumed in a SEPARATE statement from the response
+ *    insert, and the token is NEVER stored alongside the response.
+ *  - Only org_id, survey_id and (optionally) manager_id are carried over —
+ *    never the token or any employee reference.
  *  - We store only a day bucket, not a precise timestamp.
- *  - There is no DB join possible between invite_tokens and responses.
  */
-function clampRating(v: unknown): number | null {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return null;
-  if (n < 1 || n > 5) return null;
-  return Math.round(n);
-}
-
-function clampText(v: unknown, max = 2000): string | null {
-  if (typeof v !== "string") return null;
-  const trimmed = v.trim();
-  if (trimmed.length === 0) return null;
-  return trimmed.slice(0, max);
-}
-
 export async function POST(req: NextRequest) {
   let body: any;
   try {
@@ -38,85 +26,76 @@ export async function POST(req: NextRequest) {
   if (!token) {
     return NextResponse.json({ ok: false, error: "no_token" }, { status: 400 });
   }
+  const answers =
+    body.answers && typeof body.answers === "object" && !Array.isArray(body.answers)
+      ? body.answers
+      : {};
 
-  // STEP 1: validate and consume the token (separate from response insert).
-  // We use a conditional UPDATE so the same token can't double-submit.
-  // We capture org_id here so the response can be tagged to the right
-  // organisation — note org_id is the ONLY thing carried over, never the token.
-  const tokenResult = await sql`
-    UPDATE invite_tokens
-    SET used = TRUE
-    WHERE token = ${token}
-      AND used = FALSE
-      AND expires_at > NOW()
-    RETURNING org_id, manager_id;
+  // STEP 1: read (don't consume yet) so a fixable validation error doesn't burn
+  // the code.
+  const tok = await sql`
+    SELECT org_id, manager_id, survey_id FROM invite_tokens
+    WHERE token = ${token} AND used = FALSE AND expires_at > NOW()
+    LIMIT 1;
   `;
-  if (tokenResult.rowCount === 0) {
+  if (tok.rows.length === 0 || tok.rows[0].org_id == null) {
     return NextResponse.json(
       { ok: false, error: "invalid_or_used_token" },
       { status: 403 }
     );
   }
-  const orgId = tokenResult.rows[0].org_id ?? null;
-  const boundManagerId = tokenResult.rows[0].manager_id ?? null;
+  const orgId = tok.rows[0].org_id as number;
+  const boundManagerId = tok.rows[0].manager_id ?? null;
 
-  // STEP 2: insert the response. Note: we do NOT reference the token here.
-  // From this point on, there is no path in the database from a response
-  // back to the token that authorised it.
-  // A manager-bound code dictates the manager; otherwise the respondent's
-  // selection is used.
-  const managerId =
-    boundManagerId != null ? Number(boundManagerId) : Number(body.manager_id);
-  if (!Number.isInteger(managerId) || managerId <= 0) {
+  const data = tok.rows[0].survey_id
+    ? await getSurveyById(tok.rows[0].survey_id)
+    : await getOrgSurvey(orgId);
+  if (!data) {
+    return NextResponse.json({ ok: false, error: "no_survey" }, { status: 400 });
+  }
+  const { survey, questions } = data;
+
+  // Validate answers against the questionnaire.
+  const validationError = validateAnswers(questions, answers);
+  if (validationError) {
     return NextResponse.json(
-      { ok: false, error: "bad_manager" },
+      { ok: false, error: "validation", message: validationError },
       { status: 400 }
     );
   }
 
-  // Ensure the chosen manager actually belongs to this organisation.
-  if (orgId != null) {
-    const mgr = await sql`
-      SELECT 1 FROM managers WHERE id = ${managerId} AND org_id = ${orgId} LIMIT 1;
-    `;
+  // Resolve manager (bound code wins; otherwise the respondent's pick).
+  let managerId: number | null = null;
+  if (survey.collect_manager) {
+    managerId = boundManagerId != null ? Number(boundManagerId) : Number(body.manager_id);
+    if (!Number.isInteger(managerId) || managerId <= 0) {
+      return NextResponse.json({ ok: false, error: "bad_manager" }, { status: 400 });
+    }
+    const mgr = await sql`SELECT 1 FROM managers WHERE id = ${managerId} AND org_id = ${orgId} LIMIT 1;`;
     if (mgr.rows.length === 0) {
-      return NextResponse.json(
-        { ok: false, error: "bad_manager" },
-        { status: 400 }
-      );
+      return NextResponse.json({ ok: false, error: "bad_manager" }, { status: 400 });
     }
   }
 
-  const m_clarity = clampRating(body.manager_clarity);
-  const m_support = clampRating(body.manager_support);
-  const m_fairness = clampRating(body.manager_fairness);
-  const m_growth = clampRating(body.manager_growth);
-  const m_comments = clampText(body.manager_comments);
-
-  const c_trust = clampRating(body.culture_trust);
-  const c_inclusion = clampRating(body.culture_inclusion);
-  const c_workload = clampRating(body.culture_workload);
-  const c_voice = clampRating(body.culture_voice);
-  const c_comments = clampText(body.culture_comments);
-
-  const bucket = dayBucket();
-
-  await sql`
-    INSERT INTO responses (
-      manager_id, org_id,
-      manager_clarity, manager_support, manager_fairness, manager_growth,
-      manager_comments,
-      culture_trust, culture_inclusion, culture_workload, culture_voice,
-      culture_comments,
-      day_bucket
-    ) VALUES (
-      ${managerId}, ${orgId},
-      ${m_clarity}, ${m_support}, ${m_fairness}, ${m_growth},
-      ${m_comments},
-      ${c_trust}, ${c_inclusion}, ${c_workload}, ${c_voice},
-      ${c_comments},
-      ${bucket}
+  // STEP 2: consume the token atomically (guards against double-submit).
+  const consume = await sql`
+    UPDATE invite_tokens SET used = TRUE
+    WHERE token = ${token} AND used = FALSE AND expires_at > NOW()
+    RETURNING token;
+  `;
+  if (consume.rowCount === 0) {
+    return NextResponse.json(
+      { ok: false, error: "invalid_or_used_token" },
+      { status: 403 }
     );
+  }
+
+  // STEP 3: store the de-identified response.
+  const score = scoreResponse(questions, answers);
+  const answersJson = JSON.stringify(answers);
+  await sql`
+    INSERT INTO survey_responses (survey_id, org_id, manager_id, answers, score, day_bucket)
+    VALUES (${survey.id}, ${orgId}, ${managerId}, ${answersJson}::jsonb, ${score}, ${dayBucket()});
   `;
 
   return NextResponse.json({ ok: true });
