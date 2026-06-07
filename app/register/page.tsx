@@ -85,15 +85,14 @@ export default function Register() {
       <div className="flex-1 flex items-center justify-center px-6 md:px-8 py-12">
         <div className="max-w-md w-full">
           <p className="mono text-xs uppercase tracking-widest text-sage mb-4">
-            Start free · up to 10 surveys
+            Free · unlimited surveys
           </p>
           <h1 className="serif text-4xl md:text-5xl mb-3">
-            Onboard your organisation
+            Create your organisation
           </h1>
           <p className="opacity-70 text-sm mb-10">
-            Register with your official work email. No card required to start —
-            the $100-per-admin plan unlocks unlimited surveys when you&apos;re
-            ready.
+            Register with your official work email. It&apos;s free — no credit
+            card, no limits.
           </p>
 
           <form onSubmit={submit} className="space-y-6">

@@ -69,7 +69,7 @@ export default function Home() {
             style={{ animationDelay: "0.4s" }}
           >
             <Link href="/register" className="btn w-full sm:w-auto text-center">
-              Start free — up to 10 surveys
+              Start free
             </Link>
             <a href="#how" className="btn-ghost btn w-full sm:w-auto text-center">
               See how it works
@@ -146,55 +146,23 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Pricing */}
+      {/* Free */}
       <section id="pricing" className="px-6 md:px-10 py-20 border-t border-mist scroll-mt-20">
-        <div className="max-w-4xl mx-auto">
-          <p className="mono text-xs uppercase tracking-widest text-sage mb-3 text-center">
+        <div className="max-w-2xl mx-auto text-center">
+          <p className="mono text-xs uppercase tracking-widest text-sage mb-3">
             Pricing
           </p>
-          <h2 className="serif text-3xl md:text-4xl mb-14 text-center">
-            Try it free. Pay once you rely on it.
+          <h2 className="serif text-3xl md:text-5xl mb-6">
+            Free for every organisation.
           </h2>
-          <div className="grid md:grid-cols-2 gap-6">
-            {/* Free */}
-            <div className="border border-mist p-8 bg-paper flex flex-col">
-              <h3 className="serif text-2xl mb-1">Trial</h3>
-              <p className="opacity-70 text-sm mb-6">For evaluating Anonvey end to end.</p>
-              <p className="serif text-5xl mb-1">Free</p>
-              <p className="mono text-xs opacity-60 mb-6">up to 10 surveys</p>
-              <ul className="text-sm space-y-2 opacity-80 mb-8 flex-1">
-                <li>— Full feature walkthrough</li>
-                <li>— Real anonymous responses</li>
-                <li>— CSV import & manager codes</li>
-                <li>— Aggregated reports</li>
-              </ul>
-              <Link href="/register" className="btn-ghost btn text-center">
-                Start free
-              </Link>
-            </div>
-            {/* Pro */}
-            <div className="border-2 border-ink p-8 bg-ink text-paper flex flex-col relative">
-              <span className="absolute top-4 right-4 mono text-[10px] uppercase tracking-widest bg-clay text-paper px-2 py-1">
-                Most teams
-              </span>
-              <h3 className="serif text-2xl mb-1">Organisation</h3>
-              <p className="opacity-70 text-sm mb-6">Unlimited surveys for your company.</p>
-              <p className="serif text-5xl mb-1">
-                $100<span className="text-lg opacity-60"> / admin</span>
-              </p>
-              <p className="mono text-xs opacity-60 mb-6">one-time onboarding per admin seat</p>
-              <ul className="text-sm space-y-2 opacity-90 mb-8 flex-1">
-                <li>— Everything in Trial, unlimited</li>
-                <li>— Hierarchy & department roll-ups</li>
-                <li>— Email-triggered single-use codes</li>
-                <li>— Report downloads (CSV / PDF)</li>
-                <li>— Priority support</li>
-              </ul>
-              <Link href="/register" className="btn !bg-paper !text-ink hover:!bg-mist text-center">
-                Onboard your company
-              </Link>
-            </div>
-          </div>
+          <p className="opacity-80 leading-relaxed mb-10 max-w-xl mx-auto">
+            Anonvey is free to use. Register with your work email and run
+            unlimited anonymous surveys — full features, no credit card, no
+            catch.
+          </p>
+          <Link href="/register" className="btn">
+            Start free
+          </Link>
         </div>
       </section>
 
