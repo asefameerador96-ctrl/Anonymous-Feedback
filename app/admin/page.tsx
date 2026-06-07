@@ -403,17 +403,6 @@ export default function AdminDashboard() {
             <span className="opacity-50 serif text-lg md:text-xl">
               / {data.org?.name || "Admin"}
             </span>
-            {data.org?.plan && (
-              <span
-                className={`mono text-[9px] uppercase tracking-widest px-2 py-0.5 ${
-                  data.org.plan === "pro"
-                    ? "bg-sage text-paper"
-                    : "border border-mist opacity-70"
-                }`}
-              >
-                {data.org.plan}
-              </span>
-            )}
           </div>
           <nav className="flex gap-4 mono text-xs uppercase tracking-widest">
             {(["results", "survey", "manage", "employees"] as Tab[]).map((t) => (
