@@ -1,2 +1,7 @@
 User-agent: *
-Disallow: /
+Allow: /
+Disallow: /admin
+Disallow: /survey
+Disallow: /respond
+Disallow: /thank-you
+Disallow: /api

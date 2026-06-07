@@ -17,20 +17,26 @@ const nextConfig = {
   // vercel.json, which only works on Vercel — defining them here keeps them
   // working when self-hosted on Azure App Service (or anywhere else).
   async headers() {
-    return [
+    const security = [
+      { key: "Referrer-Policy", value: "no-referrer" },
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "X-Frame-Options", value: "DENY" },
       {
-        source: "/:path*",
-        headers: [
-          { key: "X-Robots-Tag", value: "noindex, nofollow" },
-          { key: "Referrer-Policy", value: "no-referrer" },
-          { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "X-Frame-Options", value: "DENY" },
-          {
-            key: "Permissions-Policy",
-            value: "geolocation=(), camera=(), microphone=()",
-          },
-        ],
+        key: "Permissions-Policy",
+        value: "geolocation=(), camera=(), microphone=()",
       },
+    ];
+    const noindex = [{ key: "X-Robots-Tag", value: "noindex, nofollow" }];
+    return [
+      // Security headers everywhere
+      { source: "/:path*", headers: security },
+      // Keep private/app routes out of search indexes; marketing pages
+      // (/, /register) stay indexable so the platform can be found.
+      { source: "/admin/:path*", headers: noindex },
+      { source: "/survey", headers: noindex },
+      { source: "/respond", headers: noindex },
+      { source: "/thank-you", headers: noindex },
+      { source: "/api/:path*", headers: noindex },
     ];
   },
 };

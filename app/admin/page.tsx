@@ -126,7 +126,7 @@ export default function AdminDashboard() {
 
   async function copyTokens() {
     const text = generatedTokens
-      .map((t) => `${baseUrl}/?code=${t}`)
+      .map((t) => `${baseUrl}/respond?code=${t}`)
       .join("\n");
     try {
       await navigator.clipboard.writeText(text);
@@ -157,7 +157,7 @@ export default function AdminDashboard() {
     <main className="min-h-screen">
       <header className="px-8 py-6 flex justify-between items-center border-b border-mist">
         <div className="flex items-center gap-6">
-          <div className="serif text-xl">Candor / Admin</div>
+          <div className="serif text-xl">Anonvey / Admin</div>
           <nav className="flex gap-4 mono text-xs uppercase tracking-widest">
             <button
               onClick={() => setTab("results")}
@@ -416,7 +416,7 @@ export default function AdminDashboard() {
                     readOnly
                     style={{ minHeight: 200 }}
                     value={generatedTokens
-                      .map((t) => `${baseUrl}/?code=${t}    ${t}`)
+                      .map((t) => `${baseUrl}/respond?code=${t}    ${t}`)
                       .join("\n")}
                   />
                 </div>

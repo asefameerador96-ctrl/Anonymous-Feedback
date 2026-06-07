@@ -140,7 +140,7 @@ export default function Survey() {
   return (
     <main className="min-h-screen flex flex-col">
       <header className="px-8 py-6 flex justify-between items-center border-b border-mist">
-        <div className="serif text-xl">Candor</div>
+        <div className="serif text-xl">Anonvey</div>
         <div className="mono text-xs opacity-50">
           Step {step + 1} of 4
         </div>

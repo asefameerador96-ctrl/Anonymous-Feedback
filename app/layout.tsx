@@ -2,9 +2,9 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Anonymous Feedback",
-  description: "A safe space to share your honest perspective.",
-  robots: "noindex, nofollow",
+  title: "Anonvey — Truly Anonymous",
+  description:
+    "Anonvey runs truly anonymous employee surveys for organisations. Anonymity is built into the data — even we can't see your results.",
 };
 
 export default function RootLayout({
