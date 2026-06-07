@@ -47,15 +47,6 @@ export default function OwnerDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function setPlan(orgId: number, plan: string) {
-    await fetch("/api/owner/stats", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "set_plan", orgId, plan }),
-    });
-    load();
-  }
-
   async function logout() {
     await fetch("/api/owner/login", { method: "DELETE" });
     router.replace("/owner/login");
@@ -89,13 +80,11 @@ export default function OwnerDashboard() {
         <h1 className="serif text-4xl md:text-5xl mb-3">Overview</h1>
         <p className="opacity-60 text-sm mb-10 max-w-xl">
           Operational metadata only. By design, this view cannot read any
-          survey answer or comment — only counts and billing.
+          survey answer or comment — only counts.
         </p>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-6 mb-14">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-14">
           <Stat label="Organisations" value={t.organizations} />
-          <Stat label="Paid" value={t.paid} />
-          <Stat label="Trial" value={t.trial} />
           <Stat label="Admins" value={t.admins} />
           <Stat label="Responses" value={t.responses} />
           <Stat label="Employees" value={t.employees} />
@@ -109,7 +98,7 @@ export default function OwnerDashboard() {
             <table className="w-full text-sm border-collapse min-w-[760px]">
               <thead>
                 <tr className="border-b border-mist text-left">
-                  {["Organisation", "Domain", "Plan", "Headcount", "Managers", "Codes", "Responses", "Joined"].map(
+                  {["Organisation", "Domain", "Headcount", "Managers", "Codes", "Responses", "Joined"].map(
                     (h) => (
                       <th
                         key={h}
@@ -131,21 +120,6 @@ export default function OwnerDashboard() {
                       )}
                     </td>
                     <td className="px-4 py-3 mono text-xs opacity-70">{o.domain || "—"}</td>
-                    <td className="px-4 py-3">
-                      <button
-                        title="Click to toggle plan (manual activation)"
-                        onClick={() =>
-                          setPlan(o.id, o.plan === "pro" ? "trial" : "pro")
-                        }
-                        className={`mono text-[10px] uppercase tracking-widest px-2 py-1 transition hover:opacity-80 ${
-                          o.plan === "trial"
-                            ? "bg-mist text-ink"
-                            : "bg-sage text-paper"
-                        }`}
-                      >
-                        {o.plan} ⇄
-                      </button>
-                    </td>
                     <td className="px-4 py-3">{o.employee_count ?? "—"}</td>
                     <td className="px-4 py-3">{o.manager_count}</td>
                     <td className="px-4 py-3">{o.token_count}</td>
