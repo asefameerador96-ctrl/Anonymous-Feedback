@@ -308,6 +308,37 @@ export default function AdminDashboard() {
             <h1 className="serif text-4xl md:text-5xl mb-12">Manage</h1>
 
             <section className="mb-16">
+              <h2 className="serif text-2xl mb-6">Anonymity threshold</h2>
+              <p className="opacity-70 text-sm mb-6 max-w-md">
+                The minimum number of responses required before any group&apos;s
+                results are revealed. Set it higher for stronger anonymity in
+                small teams, lower to see results sooner. This replaces the old
+                fixed minimum of five.
+              </p>
+              <div className="flex gap-4 items-end max-w-md">
+                <div>
+                  <label className="mono text-xs uppercase tracking-widest opacity-60 block mb-2">
+                    Minimum group size
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={thresholdInput}
+                    onChange={(e) => setThresholdInput(e.target.value)}
+                    style={{ maxWidth: 120 }}
+                  />
+                </div>
+                <button
+                  className="btn"
+                  onClick={saveThreshold}
+                  disabled={busy}
+                >
+                  {thresholdSaved ? "Saved!" : "Save"}
+                </button>
+              </div>
+            </section>
+
+            <section className="mb-16">
               <h2 className="serif text-2xl mb-6">Add a manager</h2>
               <div className="space-y-4 max-w-md">
                 <div>

@@ -1,17 +1,28 @@
-# Candor — Anonymous Employee Feedback
+# Anonvey — Truly Anonymous
 
-A privacy-first, self-hostable anonymous feedback app for rating line managers and organisational culture. Built with Next.js, deployable to Vercel in about ten minutes.
+A multi-tenant SaaS platform for running **truly anonymous** employee surveys. Any organisation registers with their work email, builds a survey, distributes single-use codes, and sees aggregated results — with anonymity built into the data architecture, not just promised in a policy. Even the platform owner cannot read an organisation's results.
+
+Built with Next.js, containerized, and running on Azure Container Apps + Azure Database for PostgreSQL.
+
+## Roles & sign-in
+
+| Who | Where | Auth |
+|-----|-------|------|
+| Respondent (employee) | `/respond?code=…` → `/survey` | single-use invite code |
+| Organisation admin | `/admin` (sign in / register at `/register`) | email + password per org (scrypt-hashed) |
+| Platform owner | `/owner` (sign in at `/owner/login`) | `ADMIN_EMAIL` + `ADMIN_PASSWORD` env |
+
+Each organisation's data (managers, codes, responses) is fully isolated by `org_id`; one company can never see another's. The owner dashboard sees only operational metadata (org list, headcounts, counts) — **never** any survey answer or comment.
 
 ## What makes this actually anonymous
 
-The hard part of an anonymous survey isn't the form — it's making sure the data architecture can't be used to deanonymise people later. This app is built around four guarantees:
+The hard part of an anonymous survey isn't the form — it's making sure the data architecture can't be used to deanonymise people later. This platform is built around these guarantees:
 
-1. **Invitation tokens are stored in a completely separate table from responses.** When you submit, the token is marked used in one transaction, then your response is inserted in another. No column links them. There is no SQL query that can join a response back to the token that authorised it.
-2. **No IP addresses, user agents, session identifiers, or precise timestamps are ever stored** alongside responses. Only a day-bucketed date (`2025-11-04`, not `2025-11-04T14:23:07Z`), so submissions cannot be correlated with badge swipes, login logs, or anything else.
-3. **Aggregation threshold of 5.** No per-manager or culture-wide result is shown to admins until at least 5 responses exist for that group. Below the threshold, the dashboard displays a suppression notice with no underlying numbers.
-4. **Free-text comments are returned to admins in random order** and are never displayed in the same row as a manager's ratings, so an admin can't read "this comment came from someone who rated their manager 1/5".
-
-The admin dashboard shows aggregate ratings and a randomised stream of comments. There is no way, even with database access, to view an individual person's complete submission tied to a token.
+1. **Invitation codes are stored in a completely separate table from responses.** When you submit, the code is marked used in one transaction, then your response is inserted in another. No column links them — the only thing carried across is the organisation id, never the code. There is no SQL query that can join a response back to the code that authorised it.
+2. **No IP addresses, user agents, session identifiers, or precise timestamps are ever stored** alongside responses. Only a day-bucketed date, so submissions cannot be correlated with badge swipes, login logs, or anything else.
+3. **A configurable anonymity threshold.** No per-manager or culture-wide result is shown until at least _N_ responses exist for that group, where _N_ is set by each org admin (default 5). Below the threshold, the dashboard suppresses all underlying numbers.
+4. **Free-text comments are returned to admins in random order** and are never displayed in the same row as a manager's ratings.
+5. **The platform owner can't read results.** The owner dashboard's query is structurally limited to metadata and counts — it never selects answer or comment content.
 
 ## Stack
 

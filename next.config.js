@@ -33,6 +33,7 @@ const nextConfig = {
       // Keep private/app routes out of search indexes; marketing pages
       // (/, /register) stay indexable so the platform can be found.
       { source: "/admin/:path*", headers: noindex },
+      { source: "/owner/:path*", headers: noindex },
       { source: "/survey", headers: noindex },
       { source: "/respond", headers: noindex },
       { source: "/thank-you", headers: noindex },
