@@ -261,6 +261,19 @@ export default function AdminDashboard() {
     if (r.status === 401) return router.replace("/admin/login");
     const d = await r.json();
     setEmployees(d.employees || []);
+    setEmailConfigured(Boolean(d.emailConfigured));
+  }
+  async function emailCodes() {
+    if (!window.confirm("Email a unique, single-use survey link to every employee who has an email address?")) return;
+    setBusy(true);
+    setEmailMsg("");
+    const r = await postEmp({ action: "email_employee_codes", survey_id: selectedSurveyId, days: tokenDays });
+    const d = await r.json();
+    setBusy(false);
+    if (d.ok) setEmailMsg(`Sent ${d.sent} email${d.sent === 1 ? "" : "s"}${d.failed ? `, ${d.failed} failed` : ""}.`);
+    else if (d.error === "no_emails") setEmailMsg("No employees have an email address.");
+    else if (d.error === "email_not_configured") setEmailMsg("Email isn't configured yet.");
+    else setEmailMsg("Couldn't send. Please try again.");
   }
 
   useEffect(() => {
@@ -422,6 +435,9 @@ export default function AdminDashboard() {
       const autoTable = (await import("jspdf-autotable")).default;
       const doc = new jsPDF();
       const date = new Date().toISOString().slice(0, 10);
+
+      // Company logo, top-right.
+      if (data.org?.logo) await addLogo(doc, data.org.logo);
 
       doc.setFont("helvetica", "bold");
       doc.setFontSize(18);
@@ -1114,11 +1130,28 @@ export default function AdminDashboard() {
               <div className="flex flex-wrap gap-4 justify-between items-end mb-6">
                 <h2 className="serif text-2xl">Roster ({employees.length})</h2>
                 {employees.length > 0 && (
-                  <button className="btn" onClick={genEmployeeCodes} disabled={busy}>
-                    Generate a code per employee
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button className="btn-ghost btn" onClick={genEmployeeCodes} disabled={busy}>
+                      Generate codes
+                    </button>
+                    <button
+                      className="btn"
+                      onClick={emailCodes}
+                      disabled={busy || !emailConfigured}
+                      title={emailConfigured ? "" : "Email sending isn't configured yet"}
+                    >
+                      Email codes to everyone
+                    </button>
+                  </div>
                 )}
               </div>
+              {employees.length > 0 && !emailConfigured && (
+                <p className="mono text-xs opacity-60 mb-4">
+                  One-click email isn&apos;t configured yet — use “Generate codes” + the
+                  mail-merge CSV below for now.
+                </p>
+              )}
+              {emailMsg && <p className="text-sm text-sage mono mb-4">{emailMsg}</p>}
 
               {recipients.length > 0 && (
                 <div className="border border-sage p-4 mb-6">
@@ -1185,6 +1218,46 @@ export default function AdminDashboard() {
 
 function csvCell(v: string) {
   return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+// Re-encode any browser-renderable logo (png/jpeg/webp/svg/gif) to a clean PNG
+// via canvas — this normalises odd PNGs so jsPDF accepts them reliably.
+async function logoToPng(
+  dataUrl: string
+): Promise<{ png: string; w: number; h: number } | null> {
+  try {
+    const img = new Image();
+    img.src = dataUrl;
+    await new Promise<void>((res, rej) => {
+      img.onload = () => res();
+      img.onerror = () => rej(new Error("img"));
+    });
+    const w = img.naturalWidth || 128;
+    const h = img.naturalHeight || 128;
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, w, h);
+    return { png: canvas.toDataURL("image/png"), w, h };
+  } catch {
+    return null;
+  }
+}
+
+// Place the org logo in the PDF, top-right. Never throws.
+async function addLogo(doc: any, dataUrl: string) {
+  try {
+    const conv = await logoToPng(dataUrl);
+    if (!conv) return;
+    const ratio = Math.min(36 / conv.w, 16 / conv.h);
+    const dw = conv.w * ratio;
+    const dh = conv.h * ratio;
+    doc.addImage(conv.png, "PNG", 196 - dw, 12, dw, dh);
+  } catch {
+    /* skip logo on any error */
+  }
 }
 
 function pdfResult(r: any): string {
