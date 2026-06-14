@@ -162,6 +162,7 @@ export default function Register() {
               </div>
               <p className="mono text-[11px] opacity-50 mt-2">
                 Shown beside the Anonvey logo to your admins and survey takers.
+                You can also add or change it later in the dashboard.
               </p>
               {errors.logo && <p className="text-xs text-clay mono mt-2">{errors.logo}</p>}
             </div>

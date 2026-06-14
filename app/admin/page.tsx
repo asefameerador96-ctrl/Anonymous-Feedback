@@ -106,6 +106,11 @@ export default function AdminDashboard() {
   const [thresholdInput, setThresholdInput] = useState("");
   const [thresholdSaved, setThresholdSaved] = useState(false);
 
+  // logo
+  const [logoData, setLogoData] = useState<string | null>(null);
+  const [logoErr, setLogoErr] = useState("");
+  const [logoSaved, setLogoSaved] = useState(false);
+
   // codes
   const [tokenCount, setTokenCount] = useState(10);
   const [tokenDays, setTokenDays] = useState(30);
@@ -336,6 +341,50 @@ export default function AdminDashboard() {
     setBusy(false);
     setThresholdSaved(true);
     setTimeout(() => setThresholdSaved(false), 2000);
+    load();
+  }
+
+  function onLogoPick(file?: File) {
+    setLogoErr("");
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setLogoErr("Please choose an image file.");
+      return;
+    }
+    if (file.size > 250 * 1024) {
+      setLogoErr("Image must be under 250 KB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setLogoData(String(reader.result || ""));
+    reader.readAsDataURL(file);
+  }
+  async function saveLogo() {
+    if (!logoData) return;
+    setBusy(true);
+    setLogoErr("");
+    const r = await post({ action: "set_logo", logo: logoData });
+    const d = await r.json();
+    setBusy(false);
+    if (d.ok) {
+      setLogoSaved(true);
+      setLogoData(null);
+      setTimeout(() => setLogoSaved(false), 2000);
+      load();
+    } else {
+      setLogoErr(
+        d.error === "logo_too_large"
+          ? "Image is too large — use one under ~250 KB."
+          : "Couldn't save the logo."
+      );
+    }
+  }
+  async function removeLogo() {
+    if (!window.confirm("Remove your organisation logo?")) return;
+    setBusy(true);
+    await post({ action: "set_logo", logo: "" });
+    setLogoData(null);
+    setBusy(false);
     load();
   }
 
@@ -868,6 +917,55 @@ export default function AdminDashboard() {
                 <button className="btn" onClick={saveThreshold} disabled={busy}>
                   {thresholdSaved ? "Saved!" : "Save"}
                 </button>
+              </div>
+            </section>
+
+            <section className="mb-16">
+              <h2 className="serif text-2xl mb-4">Organisation logo</h2>
+              <p className="opacity-70 text-sm mb-6 max-w-md">
+                Shown beside the Anonvey logo to your admins, to people taking your
+                surveys, and on PDF reports. PNG, JPG, WebP or SVG under 250&nbsp;KB.
+              </p>
+              <div className="flex items-center gap-5 flex-wrap">
+                {logoData || data.org?.logo ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={logoData || (data.org?.logo as string)}
+                    alt="Organisation logo"
+                    className="h-16 w-16 object-contain border border-mist bg-white p-1"
+                  />
+                ) : (
+                  <div className="h-16 w-16 border border-dashed border-mist flex items-center justify-center mono text-[9px] opacity-40">
+                    no logo
+                  </div>
+                )}
+                <div className="space-y-3">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="mono text-xs block"
+                    onChange={(e) => onLogoPick(e.target.files?.[0])}
+                  />
+                  <div className="flex gap-4 items-center">
+                    <button
+                      className="btn !py-2 !px-4 !text-xs"
+                      onClick={saveLogo}
+                      disabled={busy || !logoData}
+                    >
+                      {logoSaved ? "Saved!" : "Save logo"}
+                    </button>
+                    {data.org?.logo && (
+                      <button
+                        className="mono text-xs text-clay opacity-70 hover:opacity-100"
+                        onClick={removeLogo}
+                        disabled={busy}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  {logoErr && <p className="text-xs text-clay mono">{logoErr}</p>}
+                </div>
               </div>
             </section>
 

@@ -106,6 +106,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, threshold: t });
   }
 
+  if (body.action === "set_logo") {
+    const logo = typeof body.logo === "string" ? body.logo : "";
+    let logoValue: string | null = null;
+    if (logo) {
+      if (!/^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/.test(logo)) {
+        return NextResponse.json({ error: "bad_logo" }, { status: 400 });
+      }
+      if (logo.length > 400_000) {
+        return NextResponse.json({ error: "logo_too_large" }, { status: 400 });
+      }
+      logoValue = logo;
+    }
+    // An empty logo clears it.
+    await sql`UPDATE organizations SET logo = ${logoValue} WHERE id = ${orgId};`;
+    return NextResponse.json({ ok: true });
+  }
+
   if (body.action === "generate_tokens") {
     const count = Math.min(
       Math.max(parseInt(String(body.count || "1"), 10) || 1, 1),
